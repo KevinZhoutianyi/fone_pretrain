@@ -4,6 +4,7 @@
 #SBATCH --job-name=fone
 #SBATCH --partition=dev
 #SBATCH --nodes=1
+#SBATCH --ntasks=1
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=96
 #SBATCH --mem=0
@@ -29,4 +30,6 @@ cleanup() { kill "$SYNC_PID" 2>/dev/null || true
 trap cleanup EXIT
 
 echo "=== job $SLURM_JOB_ID on $(hostname): $CONFIG $EXTRA ==="
-srun torchrun --standalone --nproc_per_node=8 -m fone_pretrain.train "$CONFIG" $EXTRA
+# --ntasks=1 is load-bearing: without it slurm derives ntasks from cores/cpus-per-task
+# and launches N parallel copies whose torchrun rendezvous collide (caught in smoke).
+srun --ntasks=1 torchrun --standalone --nproc_per_node=8 -m fone_pretrain.train "$CONFIG" $EXTRA

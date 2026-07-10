@@ -4,7 +4,7 @@ Each numbered folder is a self-contained experiment with its own `run.py`, resul
 
 | # | Name | Status | Description |
 |---|------|--------|-------------|
-| — | — | — | — |
+| 01 | 125m_three_variant | running smoke | pipeline validation: 3 variants, 3B tokens, 8xH100 each |
 
 ## Convention
 - Create new numbered folders (`01_xxx/`, `02_xxx/`, ...) for new experiments — don't edit old ones.
