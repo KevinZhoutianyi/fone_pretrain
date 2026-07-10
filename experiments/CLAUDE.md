@@ -49,9 +49,14 @@ Every experiment has a `visualize.py` whose figures a reader can understand with
 
 | cluster | login | storage |
 |---|---|---|
+| HyperPod agent-eval (AWS, current box) | `ssh hpd-agent-eval-cmh` from Mac; Claude works on the login node directly | `/fsx/zhouty/` (Lustre, 39TB free); S3 `s3://tianyizhoubucket` (us-west-2) for durable copies |
 | Delta (NCSA) | `delta.ncsa.illinois.edu` | `/data/<project>/` |
 | Endeavour (USC CARC) | `ssh tzhou029@endeavour.usc.edu` (USC VPN) | `/project2/robinjia_875/tzhou029/` |
-| Local A100 node (AWS) | the current working box (no scheduler, no VPN) | `/home/ubuntu/<project>_ext/` (node-local) |
+| Local A100 node (AWS) | (no scheduler, no VPN) | `/home/ubuntu/<project>_ext/` (node-local) |
+
+### HyperPod SLURM (current cluster)
+
+Partition `dev` (default): 127 nodes of 8x H100-80GB, 192 CPUs, 2TB RAM each. No MaxWall, no preemption; multi-day jobs are fine. **The login node has no GPU: every GPU command — including smoke tests and `torch.cuda` checks — goes through `srun`/`sbatch`, never runs directly on the login node.** Redirect HF cache: `export HF_HOME=/fsx/zhouty/data/hf_cache`.
 
 On Endeavour redirect the HF cache (home quota is small): `export HF_HOME=/project2/robinjia_875/tzhou029/.cache/huggingface`.
 

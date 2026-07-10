@@ -1,0 +1,17 @@
+# 125M pipeline-validation scale. ~3B tokens, 8xH100 one node, a few hours.
+n_layer: 12
+n_head: 12
+d_model: 768
+d_ff: 2048
+seq_len: 2048
+lr: 6.0e-4
+batch_size: 16        # per GPU
+grad_accum: 2         # global batch = 16*2*8*2048 = 524k tokens
+max_steps: 6000       # ~3.1B tokens
+warmup_steps: 120
+seed: 1337
+log_every: 10
+eval_every: 250
+eval_iters: 20
+ckpt_every: 1000
+num_loss_weight: 1.0

@@ -25,33 +25,40 @@ HTML comments explain the *intent* of each block.
 of study, say what people thought was happening, and say what your
 project is investigating. Link any technical terms to Appendix A. -->
 
-[Plain-language setup paragraph: what's the system, what did prior work
-claim, what is the operational question this project answers.]
+Language models read and write numbers as text fragments: a tokenizer splits
+2024.5 into pieces and the model must reassemble the value from the pieces.
+FoNE (Fourier Number Embedding) instead gives the model each number as one
+token whose embedding encodes the exact value through Fourier features, one
+cosine and sine pair per digit. Prior work showed FoNE reaches near-perfect
+arithmetic when trained on synthetic arithmetic alone; whether it helps when
+mixed into ordinary language pretraining is open. This project pretrains the
+same model three ways on the same web plus math corpus (standard tokenizer,
+FoNE with fixed frequencies, FoNE with learned frequencies) and asks whether
+the FoNE runs win on number tasks.
 
-→ Key terms: [linked to Appendix A].
-→ How we measure success: [linked to Appendix B].
+→ Key terms: Appendix A.
+→ How we measure success: Appendix B.
 
 ### Thesis
 
-<!-- ONE sentence. The claim the whole document argues for. Should be
-falsifiable and specific. -->
-
-> [One-sentence thesis the paper argues for.]
+> A small model pretrained from scratch with FoNE on a web plus math corpus
+> beats both its standard-tokenizer twin and much larger frontier models on
+> multi-digit arithmetic and numeric-precision tasks, at equal pretrain token
+> budget and a fraction of the compute.
 
 ### Prior work and what makes the question hard
 
-<!-- Why the obvious experiment doesn't settle the question. What
-confound or measurement ambiguity makes prior claims open to alternative
-interpretations? Name the two (or more) theories that the same observable
-data is consistent with — this sets up §1 phenomenon and §2 controls. -->
+The FoNE paper (arXiv:2502.09741) trained small models on synthetic arithmetic
+only and reported near-perfect accuracy with far less data than digit-wise or
+subword baselines. Google's TabFM used a learned-frequency variant inside a
+tabular foundation model. Neither tested FoNE inside natural-language
+pretraining, where numbers are sparse, noisy, and mixed with text, so the
+gains could vanish once the embedding must share capacity with language.
 
-[2–4 sentences: prior claim + the measurement that supports it +
-the alternative interpretation prior work did not rule out.]
-
-| Theory | What it predicts in the standard experiment | What a discriminating test would look like |
+| Theory | What it predicts in our pretrain comparison | Discriminating test |
 |---|---|---|
-| (1) [Strong claim from prior work] | [observable] | [test that would fail under theory 2] |
-| (2) [Alternative interpretation] | [same observable, different mechanism] | [test that would fail under theory 1] |
+| (1) FoNE gains transfer to pretraining | FoNE runs beat the baseline twin on number tasks at equal tokens | equal-budget three-variant comparison, §2 |
+| (2) Gains are an artifact of arithmetic-only training | number-task gap shrinks to noise once data is mostly text | same comparison; theory 2 predicts no gap |
 
 ---
 
@@ -74,10 +81,10 @@ Rules for cells:
 
 | § | Question | What we did | What we showed | Therefore → |
 |---|---|---|---|---|
-| **§1 Phenomenon** | [Does the observation prior work claims actually hold under a fair measurement?] | [Re-ran the canonical experiment with the obvious confounds removed; tested at small scale for robustness.] | [The phenomenon is real but [varies with X]; not explained by [confound A or B].] | [The phenomenon exists, but the variation is what needs explaining. → §2] |
-| **§2 Controls** | [What's actually causing the observed effect — theory 1 (concept-specific) or theory 2 (alternative)?] | [First tried the naive control X. When that failed, noticed property Y in the data. Built a refined control matching property Y. Stress-tested.] | [The naive control failed; the refined control reproduced the effect *without* the property theory 1 requires. Theory 1 falsified for the majority of cases.] | [The trigger is [property Y], not [theory 1's mechanism]. Open question: how does property Y produce the output? → §3] |
-| **§3 Mechanism** | [N mechanistic questions in order: (1) where? (2) one feature or many? (3) is step A alone enough? (4) feature 1 or feature 2? (5) ...] | [Localization probe; single-axis predictor test; direct injection of the candidate feature; falsification test of a candidate alternative.] | [(1) Localized to [region X]. (2) Multi-dimensional. (3) [Step A] alone is *not* enough — the cascade through [steps B] is essential. (4) [feature 2], not [feature 1].] | [The effect is the system's normal output behavior conditioned on a perturbed state, not a dedicated detector. → §4] |
-| **§4 Origin** *(planned)* | [When during training does the [readout-layer geometry / capability / mechanism] form? Is it [post-training-specific] or [already present in pretraining]?] | [(planned) Run §1 + §2 measurements across intermediate training checkpoints; compare emergence trajectory to other capabilities.] | *(predicted)* [The mechanism emerges with general-output capability during pretraining, not as a separate post-training milestone.] | [If predicted: the phenomenon is a side-effect of general capability geometry. If falsified: it's genuinely [post-training-specific]. Either way, sharpens the headline claim.] |
+| **§1 Pipeline validity** *(planned)* | Does FoNE-in-pretraining train stably at all: does the mixed loss converge and does per-digit accuracy rise? | (planned) 125M-parameter runs of all three variants on ~3B tokens; watch loss curves and digit accuracy. | *(predicted)* All three train stably; FoNE digit accuracy climbs well above chance early. | The pipeline is sound; any §2 gap is real, not an artifact. → §2 |
+| **§2 Equal-budget comparison** *(planned)* | At the same pretrain token budget, does FoNE beat its standard-tokenizer twin on number tasks? | (planned) 350M-parameter runs, 10B+ tokens, identical data and schedule; number eval suite on all three. | *(predicted, theory 1)* FoNE variants win by a wide margin on arithmetic exact match; falsifier: gap within noise means theory 2. | The embedding, not data or scale, causes the gain. → §3 |
+| **§3 Frontier comparison** *(planned)* | Does the small FoNE model beat frontier company models on the same number tasks? | (planned) Run the identical eval suite on GPT / Claude / Gemini / open Llama; compare exact match by digit length. | *(predicted)* Frontier models degrade sharply past ~6 digits; the FoNE model stays near ceiling. | A 350M model wins on numeracy at a fraction of the compute: the headline. → §4 |
+| **§4 Fixed vs learned frequencies** *(planned)* | Do learned Fourier frequencies (TabFM style) help or hurt relative to fixed powers of ten? | (planned) Same §2 protocol; the two FoNE variants differ only in the input featurizer. | *(predicted)* Parity or small gain for learned; falsifier: instability or a loss on precision tasks. | Guidance for how future models should adopt FoNE. |
 
 ---
 

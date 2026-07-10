@@ -19,7 +19,7 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| [job_id] | [Exp X] | [ETA tonight] | [§3.4] | [closes Q3 in §3] |
+| (none yet) | | | | code and data pipeline under construction |
 
 ---
 
@@ -52,6 +52,16 @@ gets re-attempted blindly. -->
 <!-- Numbered list. Each step names which paper.md § it serves —
 otherwise the queue drifts away from the paper's argument. -->
 
-1. **[Action item]** — serves paper.md §[N]. [One-line description of
-   what this experiment closes; compute estimate.]
-2. **[Action item]** — serves paper.md §[N]. [...]
+1. **Unit-test number extraction and FoNE features (CPU)** — serves paper.md §1.
+   Correctness gate before any GPU spend; pytest on extraction regex, digit slots,
+   exact phase computation, decode round-trip.
+2. **Prepare 3B-token data, baseline and fone variants** — serves paper.md §1.
+   FineWeb-Edu 70% + FineMath 30%, TinyLlama tokenizer; manifest token/number
+   counts spot-checked by decoding samples. CPU-only on login node, hours.
+3. **125M pipeline-validation runs, all three variants via srun** — serves paper.md §1.
+   One node 8×H100 each, ~3B tokens; check loss curves and digit accuracy rise.
+4. **350M formal three-variant comparison, 10B+ tokens** — serves paper.md §2.
+   The equal-token-budget comparison that isolates the embedding as the cause.
+5. **Number eval suite incl. frontier-model comparison** — serves paper.md §3.
+   Arithmetic exact match by digit length, number comparison, numeric precision;
+   frontier API models need keys from the user (blocked on that).
