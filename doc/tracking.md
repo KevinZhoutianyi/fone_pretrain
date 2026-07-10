@@ -32,7 +32,7 @@ paper.md, this row can be kept here as the historical record. -->
 
 | job | exp | serves paper.md § | result (one-line) |
 |---|---|---|---|
-| [job_id] | [Exp Y] | [§N] | [one-line headline finding] |
+| 216-218 | exp 01 smoke (20 steps, 3 variants) | §1 | all COMPLETED; fone num_loss 2.52->0.93, digit_acc 0.10->0.85; S3 sync verified |
 
 ---
 
@@ -44,7 +44,9 @@ gets re-attempted blindly. -->
 
 | job | exp | failure mode | resolution |
 |---|---|---|---|
-| [job_id] | [Exp Z] | [OOM / meta-tensor / path bug] | [fixed in commit X / re-submitted as job Y / blocked on Z] |
+| 214 | exp 01 smoke v1 (srun loop) | srun spawned 4 duplicate torchruns (192 cpu / 48 cpu-per-task), rendezvous collided, variants reported bit-identical metrics | --ntasks=1 everywhere; resubmitted as sbatch 216-218 |
+| 214 | same | configs/data on login-node /tmp scratchpad invisible to compute nodes | smoke assets moved to /fsx/zhouty/data/fone_pretrain/smoke/ |
+| 217/218 v1 | fone smokes | torch.compile: boolean-index embed -> per-step recompiles + IndexPutBackward autograd errors (recovered eager, slow) | dense masked ops, static shapes; rerun as 219 |
 
 ---
 
