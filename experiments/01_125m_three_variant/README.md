@@ -37,6 +37,7 @@ srun --gres=gpu:1 ... python -m fone_pretrain.eval_numbers \
 |---|---|
 | unit tests (extraction, phases, decode, learned-init parity) | 11/11 green |
 | 20-step smoke, all 3 variants (jobs 216-218) | COMPLETED 0:0 |
+| smoke rerun after static-shape rewrite (job 220) | 3/3 PASS, 0 autograd warnings; fone 21.5k -> 55.8k tok/s |
 | fone smoke trajectory | num_loss 2.52 (=ln 10, random init) -> 0.93; digit_acc 0.10 -> 0.85 |
 | fone == fone_learned at step 0 | bit-identical loss, as designed (multiplier init 1.0) |
 | checkpoint -> S3 auto-sync | verified, s3://tianyizhoubucket/fone_pretrain/run_fone/ |
