@@ -19,7 +19,8 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| (none yet) | | | | code and data pipeline under construction |
+| login-node bg | data prep mix3b (baseline + fone) | ~2.3B / ~1.1B of 3.2B tokens | §1 | CPU tokenization; gates the 125M runs |
+| 219 | exp 01 smoke rerun (compile-clean check) | running | §1 | confirms static-shape rewrite removed graph breaks |
 
 ---
 

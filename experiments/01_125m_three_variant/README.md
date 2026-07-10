@@ -33,4 +33,19 @@ srun --gres=gpu:1 ... python -m fone_pretrain.eval_numbers \
 
 ## Status / observations
 
-(pending — smoke test in progress)
+| check | result |
+|---|---|
+| unit tests (extraction, phases, decode, learned-init parity) | 11/11 green |
+| 20-step smoke, all 3 variants (jobs 216-218) | COMPLETED 0:0 |
+| fone smoke trajectory | num_loss 2.52 (=ln 10, random init) -> 0.93; digit_acc 0.10 -> 0.85 |
+| fone == fone_learned at step 0 | bit-identical loss, as designed (multiplier init 1.0) |
+| checkpoint -> S3 auto-sync | verified, s3://tianyizhoubucket/fone_pretrain/run_fone/ |
+
+Early digit_acc ~0.85 mostly reflects zero-padded slots (a number shorter than 15
+digits has zeros in the unused slots); the meaningful signal is num_loss falling and
+digit_acc continuing past the all-zeros ceiling during the real run.
+
+Fixed along the way: srun without --ntasks=1 spawned 4 duplicate torchruns whose
+rendezvous collided (first smoke reported bit-identical metrics across variants);
+boolean-index embed/loss caused torch.compile recompiles and IndexPutBackward
+errors, replaced with dense masked ops (static shapes).
