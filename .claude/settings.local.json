@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Read(*)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.semanticscholar.org)",
+      "WebFetch(domain:html.duckduckgo.com)"
+    ],
+    "deny": [
+      "Bash(rm:*)",
+      "Bash(rm *)",
+      "Bash(rmdir:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -f:*)",
+      "Bash(git clean -fd:*)",
+      "Bash(git checkout -- *)",
+      "Bash(git branch -D:*)",
+      "Bash(find * -delete*)",
+      "Bash(find * -exec rm*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "curl -s -d 'Claude needs permission to edit a file' ntfy.sh/tzhou4-claude-x7k9z2 > /dev/null" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "curl -s -d 'Claude finished a task' ntfy.sh/tzhou4-claude-x7k9z2 > /dev/null" }
+        ]
+      }
+    ]
+  }
+}

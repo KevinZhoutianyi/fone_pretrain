@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# uv
+uv.lock
+
+# Checkpoints and large outputs — store in /data/fone_pretrain/ instead
+*.pt
+*.bin
+*.safetensors
+ckpts/
+checkpoints/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Wandb
+wandb/
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/

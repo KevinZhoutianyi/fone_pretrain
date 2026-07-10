@@ -1,0 +1,36 @@
+[project]
+name = "fone_pretrain"
+version = "0.1.0"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "torch>=2.2",
+    "pyyaml>=6.0",
+    "wandb>=0.16",
+    "transformers>=4.40",
+    "numpy>=1.26",
+    "datasets>=2.18",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.4"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fone_pretrain"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120

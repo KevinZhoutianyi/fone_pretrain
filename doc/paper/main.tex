@@ -1,0 +1,225 @@
+% =============================================================================
+% [PROJECT TITLE] — paper draft
+%
+% This is a starter LaTeX template that mirrors the structure of doc/paper.md.
+% Each section here corresponds to a § in paper.md; the rules for what goes in
+% each section live in doc/CLAUDE.md.
+%
+% Compile on Overleaf: upload the whole `paper/` folder as a new Overleaf
+% project. Compiler: pdfLaTeX. Main document: main.tex.
+% =============================================================================
+\documentclass[11pt, letterpaper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[colorlinks=true, linkcolor=blue!50!black, citecolor=blue!50!black,
+            urlcolor=blue!50!black]{hyperref}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{microtype}
+\usepackage{caption}
+\usepackage{authblk}
+\usepackage{natbib}
+\usepackage{lmodern}   % scalable fonts (required by microtype font expansion)
+\usepackage[textwidth=2.5cm, textsize=footnotesize]{todonotes}
+\usepackage{placeins}  % \FloatBarrier — keep figures from floating past section boundaries
+
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+% =============================================================================
+% Coauthor comment macros (for review markup; visible in margin)
+%
+% Usage in the body:
+%   \tynote{question or note from the primary author}
+%   \robinnote{advisor's comment}
+%   \coauthornote{Initials}{generic coauthor's comment}
+%
+% Inline form (no margin) — when sentence-level annotation is more natural:
+%   \inlinecomment{Init}{sentence-level remark}
+%
+% To strip all comments for a clean draft, replace the todonotes import with
+%   \usepackage[disable]{todonotes}
+% =============================================================================
+\newcommand{\tynote}[1]{\todo[color=blue!25, inline=false]{\textbf{TY:} #1}}
+\newcommand{\robinnote}[1]{\todo[color=red!25, inline=false]{\textbf{Robin:} #1}}
+\newcommand{\coauthornote}[2]{\todo[color=green!25, inline=false]{\textbf{#1:} #2}}
+\newcommand{\inlinecomment}[2]{\textcolor{purple}{\textbf{[#1: }#2\textbf{]}}}
+
+\title{[PROJECT TITLE]\\
+  [Subtitle: the one-sentence thesis]}
+\author{[Author]}
+\affil{[Affiliation]}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+[Prior work claim in one sentence.] [Our refined measurement in one
+sentence.] [Headline numbers.] [Mechanism story in one sentence.]
+[Implication for the field.]
+
+This abstract mirrors the structure of \texttt{doc/paper.md}'s
+\textsc{Thesis} subsection. Replace bracketed placeholders with the
+project specifics.
+\end{abstract}
+
+% =============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{Phenomenon and the measurement that supports it}
+[Plain-language setup: what's the system, what did prior work claim,
+what is the operational question this paper answers. 3--6 sentences a
+non-specialist can follow.]
+
+\subsection{Two theories the data are consistent with}
+
+[Most projects have a discriminator story. Set it up here.]
+
+\begin{table}[h]
+\centering
+\small
+\caption{Two theories the data are consistent with.}
+\label{tab:theories}
+\begin{tabular}{p{0.18\textwidth}p{0.36\textwidth}p{0.36\textwidth}}
+\toprule
+\textbf{Theory} & \textbf{What it predicts} & \textbf{Discriminator}\\
+\midrule
+\textbf{Theory 1} & [Prediction in standard exp] & [Test that would fail under T2] \\
+\textbf{Theory 2} & [Same observable, alt mechanism] & [Test that would fail under T1] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Setup and headline claims}
+
+[Model / dataset / canonical configuration here.]
+
+\paragraph{Headline claims.}
+\begin{enumerate}[leftmargin=*, itemsep=2pt, topsep=2pt]
+\item [Claim 1 — one sentence with the headline number.]
+\item [Claim 2.]
+\item [Claim 3.]
+\item [Claim 4.]
+\end{enumerate}
+
+% =============================================================================
+\section{Phenomenon}
+\label{sec:phenomenon}
+
+[Brief replication of prior work's measurement under our refined
+protocol. Include the methodological controls that rule out trivial
+confounds. Compare to prior numbers.]
+
+% =============================================================================
+\section{Controls: what's actually triggering the effect?}
+\label{sec:controls}
+
+This section follows a \emph{discovery arc}---each control tightens the
+question for the next experiment.
+
+\subsection{The naive control fails, but for the wrong reason}
+[Run a first-pass control. Find the loophole.]
+
+\subsection{The refined control}
+[Refine the control to close the loophole. Report the discriminating result.]
+
+\subsection{Per-condition discriminator}
+[Generalize to a population of conditions; z-score each against the
+refined-control distribution.]
+
+\begin{figure}[t]
+\centering
+% \includegraphics[width=0.75\linewidth]{figures/fig1_main.pdf}
+\caption{Main discriminator figure (placeholder). Regenerate via
+\texttt{python paper/figures/make\_figures.py}.}
+\label{fig:main}
+\end{figure}
+
+\subsection{Discriminator status}
+[Summarize: which theory survives, for what fraction of cases. Explicitly
+weaken claims where the data is partial.]
+
+% =============================================================================
+\section{Mechanism}
+\label{sec:mechanism}
+
+The controls established the trigger is not [theory-1's mechanism]. This
+section asks the mechanistic questions that remain.
+
+\paragraph{Q1: [first mechanistic question].}
+[One-sentence answer with citation.]
+
+\paragraph{Q2: [second].}
+[Answer.]
+
+\paragraph{Q3: [third].}
+[Answer.]
+
+\paragraph{Q4: [fourth].}
+[Answer.]
+
+\subsection{Synthesis}
+\label{sec:synthesis}
+
+[Combined picture: one paragraph summarizing the mechanism story.]
+
+\paragraph{What we explicitly do NOT claim.}
+\begin{itemize}[leftmargin=*, itemsep=1pt, topsep=2pt]
+\item \emph{Not} ``[over-strong claim 1]'' (falsified by Q$x$'s answer).
+\item \emph{Not} ``[over-strong claim 2]'' ([reason]).
+\item \emph{Not} ``[over-strong claim 3]'' ([reason]).
+\end{itemize}
+
+% =============================================================================
+\section{[Behavioral evidence / Cross-task generalization / etc.]}
+\label{sec:behavioral}
+
+[Optional § for behavioral evidence beyond the forced-choice measurement.
+Include here if relevant to the project.]
+
+% =============================================================================
+\section{Related work}
+\label{sec:related}
+
+\begin{itemize}[leftmargin=*, itemsep=3pt, topsep=2pt]
+\item \citet{example2024} [Relation to our work in one sentence.]
+\item \citet{example2025} [Relation.]
+\end{itemize}
+
+% =============================================================================
+\section{Conclusion}
+
+[1--2 paragraph summary: what we showed, what the field should take
+away, what's open.]
+
+% =============================================================================
+\FloatBarrier   % flush any remaining body-section figures before references.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+% =============================================================================
+\appendix
+\newpage
+\section{Key terms}
+\label{app:terms}
+\begin{description}[leftmargin=*, itemsep=1pt]
+\item[Term 1] [Definition + how it's measured.]
+\item[Term 2] [Definition.]
+\end{description}
+
+\section{How to read the metrics}
+\label{app:metric}
+[Primary metric formula + range interpretation + common confusion + z-score formula.]
+
+\section{Per-experiment detail tables}
+\label{app:detail}
+[Large tables that would clutter §3--§4. Cited as ``→ See Appendix C'' from the body.]
+
+\end{document}
