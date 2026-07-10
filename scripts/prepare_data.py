@@ -57,7 +57,9 @@ def main():
         print(f"<NUM> id = {num_id}, vocab = {len(tok)}")
     eos = tok.eos_token_id
 
-    streams = [load_dataset(name, cfg, split="train", streaming=True) for name, cfg, _ in SOURCES]
+    # keep only the text column: metadata schemas differ across sources and break interleave
+    streams = [load_dataset(name, cfg, split="train", streaming=True).select_columns(["text"])
+               for name, cfg, _ in SOURCES]
     mixed = interleave_datasets(streams, probabilities=[w for _, _, w in SOURCES], seed=42)
 
     # === streaming tokenize into shards ===
@@ -78,22 +80,39 @@ def main():
             print(f"shard {shard_idx}: {total:,} tokens total, {docs:,} docs", flush=True)
             shard_idx += 1
 
+    # batch-encode ~512 docs at a time: the fast tokenizer parallelizes across cores
+    BATCH_DOCS = 512
+    batch_texts, batch_numbers = [], []
+
+    def process_batch():
+        nonlocal total, docs
+        encoded = tok(batch_texts, add_special_tokens=False)["input_ids"]
+        for ids, numbers in zip(encoded, batch_numbers):
+            ids = ids + [eos]
+            if args.mode == "fone" and numbers:
+                positions = [total + i for i, t in enumerate(ids) if t == num_id]
+                # guard: tokenizer must keep <NUM> atomic and counts must line up
+                assert len(positions) == len(numbers), f"NUM count mismatch: {len(positions)} vs {len(numbers)}"
+                nums_buf.extend((p, digits_to_slots(a, b)) for p, (a, b) in zip(positions, numbers))
+            buf.extend(ids)
+            total += len(ids)
+            docs += 1
+        batch_texts.clear(), batch_numbers.clear()
+        flush()
+
     for doc in mixed:
         text = doc["text"]
+        numbers = []
         if args.mode == "fone":
             text, numbers = extract_numbers(text, NUM_TOKEN)
-        ids = tok(text, add_special_tokens=False)["input_ids"] + [eos]
-        if args.mode == "fone" and numbers:
-            positions = [total + i for i, t in enumerate(ids) if t == num_id]
-            # guard: tokenizer must keep <NUM> atomic and counts must line up
-            assert len(positions) == len(numbers), f"NUM count mismatch: {len(positions)} vs {len(numbers)}"
-            nums_buf.extend((p, digits_to_slots(a, b)) for p, (a, b) in zip(positions, numbers))
-        buf.extend(ids)
-        total += len(ids)
-        docs += 1
-        flush()
-        if total >= budget:
-            break
+        batch_texts.append(text)
+        batch_numbers.append(numbers)
+        if len(batch_texts) >= BATCH_DOCS:
+            process_batch()
+            if total >= budget:
+                break
+    if batch_texts and total < budget:
+        process_batch()
     flush(final=True)
 
     # === manifest: everything the loader/model needs ===

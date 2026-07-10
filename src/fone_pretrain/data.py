@@ -44,12 +44,14 @@ class PackedDataset:
 
         for b in range(batch_size):
             # pick a shard, then a window inside the allowed region for this split
-            s = int(rng.integers(len(self.tokens)))
-            lo, hi = 0, len(self.tokens[s]) - L - 1
-            if s == self.last and self.split == "train":
-                hi = min(hi, self.val_start - L - 1)
-            elif self.split == "val":
-                s, lo = self.last, self.val_start
+            if self.split == "val":
+                s = self.last
+                lo, hi = self.val_start, len(self.tokens[s]) - L - 1
+            else:
+                s = int(rng.integers(len(self.tokens)))
+                lo, hi = 0, len(self.tokens[s]) - L - 1
+                if s == self.last:  # keep training windows out of the val tail
+                    hi = min(hi, self.val_start - L - 1)
             start = int(rng.integers(lo, hi))
             window = self.tokens[s][start:start + L + 1].astype(np.int64)
             idx[b], tgt[b] = window[:-1], window[1:]
