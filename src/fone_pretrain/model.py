@@ -6,6 +6,7 @@ positions get a Fourier value embedding added on the input side, and positions
 whose *target* is <NUM> get a per-digit loss from FoneDigitHead on the output side.
 """
 
+import os
 from dataclasses import dataclass
 
 import torch
@@ -111,7 +112,8 @@ class FonePretrainModel(nn.Module):
 
         self.apply(self._init)
         n_params = sum(p.numel() for p in self.parameters())
-        print(f"model: {cfg.n_layer}L/{cfg.d_model}d/{cfg.n_head}h  embed_mode={cfg.embed_mode}  params={n_params/1e6:.1f}M")
+        if os.environ.get("RANK", "0") == "0":  # once, not per DDP rank
+            print(f"model: {cfg.n_layer}L/{cfg.d_model}d/{cfg.n_head}h  embed_mode={cfg.embed_mode}  params={n_params/1e6:.1f}M")
 
     @staticmethod
     def _init(m):
@@ -123,13 +125,18 @@ class FonePretrainModel(nn.Module):
     def embed(self, idx: torch.Tensor, num_slots: torch.Tensor | None) -> torch.Tensor:
         """Token embeddings; at <NUM> positions add the projected Fourier value embedding.
         num_slots: (B, T, 15) digit slots, zeros at non-number positions.
+
+        Dense mask-multiply on purpose: boolean indexing gives dynamic shapes, which
+        made torch.compile recompile every step (4x slowdown in smoke) and tripped
+        IndexPutBackward autograd errors. Featurizing every position and zeroing
+        non-<NUM> ones is static-shape and costs one cheap 30->d matmul over T.
         """
         x = self.tok_emb(idx)
         if self.cfg.embed_mode != "baseline":
-            mask = idx == self.cfg.num_token_id                      # (B, T)
-            if mask.any():
-                x = x.clone()
-                x[mask] = x[mask] + self.num_in(num_slots[mask]).to(x.dtype)
+            B, T = idx.shape
+            mask = (idx == self.cfg.num_token_id).unsqueeze(-1).to(x.dtype)   # (B, T, 1)
+            add = self.num_in(num_slots.reshape(B * T, -1)).reshape(B, T, -1)
+            x = x + mask * add.to(x.dtype)
         return x
 
     def hidden(self, idx, num_slots=None):
@@ -157,9 +164,14 @@ class FonePretrainModel(nn.Module):
         out = {"lm_loss": lm_loss, "num_loss": torch.zeros_like(lm_loss),
                "digit_acc": torch.ones((), device=idx.device)}
         if self.cfg.embed_mode != "baseline":
-            tmask = targets == self.cfg.num_token_id
-            if tmask.any():
-                num_loss, digit_acc = self.num_head.loss(h[tmask], target_slots[tmask])
-                out["num_loss"], out["digit_acc"] = num_loss, digit_acc
+            # masked mean instead of boolean indexing: static shapes for torch.compile
+            tmask = (targets == self.cfg.num_token_id).float()                # (B, T)
+            n_num = tmask.sum().clamp(min=1.0)
+            dlogits = self.num_head.digit_logits(h)                          # (B, T, 15, 10)
+            ce = F.cross_entropy(dlogits.reshape(-1, 10), target_slots.reshape(-1).long(),
+                                 reduction="none").view(target_slots.shape).mean(-1)  # (B, T)
+            out["num_loss"] = (ce * tmask).sum() / n_num
+            acc = (dlogits.argmax(-1) == target_slots).float().mean(-1)      # (B, T)
+            out["digit_acc"] = (acc * tmask).sum() / n_num
         out["loss"] = out["lm_loss"] + self.cfg.num_loss_weight * out["num_loss"]
         return out

@@ -63,11 +63,10 @@ def main():
         embed_mode=cfg["embed_mode"], num_token_id=man["num_token_id"],
         num_loss_weight=cfg.get("num_loss_weight", 1.0),
     )
-    model = FonePretrainModel(mcfg).to(device)
-    model = torch.compile(model)
+    raw = FonePretrainModel(mcfg).to(device)   # uncompiled ref: clean state_dict keys
+    model = torch.compile(raw)                 # params are shared, not copied
     if ddp:
         model = torch.nn.parallel.DistributedDataParallel(model)
-    raw = model.module if ddp else model
 
     opt = torch.optim.AdamW(raw.parameters(), lr=cfg["lr"], betas=(0.9, 0.95),
                             weight_decay=0.1, fused=True)
