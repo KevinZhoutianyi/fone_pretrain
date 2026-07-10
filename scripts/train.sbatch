@@ -13,7 +13,8 @@
 
 set -euo pipefail
 CONFIG=$1
-EXTRA=${2:-}
+shift
+EXTRA=("$@")   # everything after CONFIG, e.g. --resume ckpt.pt -- keep all args, not just $2
 cd /fsx/zhouty/fone_pretrain
 source .venv/bin/activate
 export HF_HOME=/fsx/zhouty/data/hf_cache
@@ -29,7 +30,7 @@ cleanup() { kill "$SYNC_PID" 2>/dev/null || true
             aws s3 sync "$RUN_DIR" "$S3_DEST" --region us-west-2 --no-progress || true; }
 trap cleanup EXIT
 
-echo "=== job $SLURM_JOB_ID on $(hostname): $CONFIG $EXTRA ==="
+echo "=== job $SLURM_JOB_ID on $(hostname): $CONFIG ${EXTRA[*]} ==="
 # --ntasks=1 is load-bearing: without it slurm derives ntasks from cores/cpus-per-task
 # and launches N parallel copies whose torchrun rendezvous collide (caught in smoke).
-srun --ntasks=1 torchrun --standalone --nproc_per_node=8 -m fone_pretrain.train "$CONFIG" $EXTRA
+srun --ntasks=1 torchrun --standalone --nproc_per_node=8 -m fone_pretrain.train "$CONFIG" "${EXTRA[@]}"

@@ -10,9 +10,19 @@ Output layout under --out (one dir per source split):
   numbers_XXXX.npy   structured array (pos:int64 into tokens, slots:uint8[15])
                      -- written only in fone mode; baseline needs no sidecar
 
-Usage (login node, CPU-only, ~1-2h for 3B tokens with 32 workers):
-  uv run python scripts/prepare_data.py --mode fone --tokens 3e9 --out /fsx/zhouty/data/fone_pretrain/datasets/mix3b_fone
-  uv run python scripts/prepare_data.py --mode baseline --tokens 3e9 --out /fsx/zhouty/data/fone_pretrain/datasets/mix3b_baseline
+Budget is by DOCUMENT COUNT (--docs), not token count. The document stream is a
+deterministic function of `seed` below, independent of --mode, so passing the same
+--docs to both a baseline and a fone run gives them the identical document set: this
+is what "same underlying text" actually requires. Budgeting by --tokens instead would
+let the two runs stop at different points in the stream (FoNE compresses numbers to
+one token each, so it needs more documents to reach the same token count) and silently
+give the two variants disjoint corpora -- caught in review before the first real
+training run (see doc/tracking.md "Recently failed jobs").
+
+Usage (login node, CPU-only; ~1h per 1B tokens with batched HF tokenization):
+  # first pass: pick --docs by watching total_tokens in manifest.json approach target
+  uv run python scripts/prepare_data.py --mode baseline --docs 2405888 --out .../mix3b_baseline
+  uv run python scripts/prepare_data.py --mode fone     --docs 2405888 --out .../mix3b_fone
 """
 
 import argparse
@@ -44,7 +54,7 @@ SOURCES = [
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["baseline", "fone"], required=True)
-    ap.add_argument("--tokens", type=float, required=True, help="total token budget, e.g. 3e9")
+    ap.add_argument("--docs", type=int, required=True, help="document budget (same value for every variant -> same corpus)")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--val-tokens", type=float, default=2e7, help="held-out tail for eval")
     args = ap.parse_args()
@@ -63,7 +73,7 @@ def main():
     mixed = interleave_datasets(streams, probabilities=[w for _, _, w in SOURCES], seed=42)
 
     # === streaming tokenize into shards ===
-    budget = int(args.tokens)
+    doc_budget = args.docs
     buf, nums_buf, shard_idx, total, docs = [], [], 0, 0, 0
 
     def flush(final=False):
@@ -109,9 +119,9 @@ def main():
         batch_numbers.append(numbers)
         if len(batch_texts) >= BATCH_DOCS:
             process_batch()
-            if total >= budget:
+            if docs >= doc_budget:
                 break
-    if batch_texts and total < budget:
+    if batch_texts and docs < doc_budget:
         process_batch()
     flush(final=True)
 

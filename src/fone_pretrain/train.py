@@ -17,6 +17,13 @@ import sys
 import time
 from pathlib import Path
 
+
+def _nan_to_none(x):
+    """json.dumps emits nonstandard `NaN` for float('nan'); use null instead so
+    metrics.jsonl stays valid JSON for downstream plotting (baseline's digit_acc
+    is NaN by design -- it has no digit head, see model.py)."""
+    return None if isinstance(x, float) and math.isnan(x) else x
+
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -68,8 +75,15 @@ def main():
     if ddp:
         model = torch.nn.parallel.DistributedDataParallel(model)
 
-    opt = torch.optim.AdamW(raw.parameters(), lr=cfg["lr"], betas=(0.9, 0.95),
-                            weight_decay=0.1, fused=True)
+    # freq_mult (fone_learned only) is initialized to 1.0 so it starts exactly
+    # equivalent to the fixed FoNE variant; global weight decay would drag it toward
+    # 0, where cos/sin of the phase collapses to a constant and destroys the number
+    # signal entirely. Exclude it from decay; everything else keeps the original rate.
+    no_decay = [p for n, p in raw.named_parameters() if n.endswith("freq_mult")]
+    decay = [p for n, p in raw.named_parameters() if not n.endswith("freq_mult")]
+    opt = torch.optim.AdamW(
+        [{"params": decay, "weight_decay": 0.1}, {"params": no_decay, "weight_decay": 0.0}],
+        lr=cfg["lr"], betas=(0.9, 0.95), fused=True)
 
     start_step = 0
     if args.resume:
@@ -132,7 +146,7 @@ def main():
         if master and (step % cfg["log_every"] == 0 or step == cfg["max_steps"] - 1):
             dt = time.time() - t0
             rec = {"step": step, "loss": out["loss"].item(), "lm_loss": out["lm_loss"].item(),
-                   "num_loss": out["num_loss"].item(), "digit_acc": out["digit_acc"].item(),
+                   "num_loss": out["num_loss"].item(), "digit_acc": _nan_to_none(out["digit_acc"].item()),
                    "lr": lr_at(step), "tok_per_s": int(tokens_seen / dt)}
             print(json.dumps(rec), flush=True)
             metrics_f.write(json.dumps(rec) + "\n")
@@ -140,6 +154,7 @@ def main():
 
         if master and step > 0 and step % cfg["eval_every"] == 0:
             ev = evaluate()
+            ev["digit_acc"] = _nan_to_none(ev["digit_acc"])
             print(json.dumps({"step": step, "val": ev}), flush=True)
             metrics_f.write(json.dumps({"step": step, "val": ev}) + "\n")
             metrics_f.flush()

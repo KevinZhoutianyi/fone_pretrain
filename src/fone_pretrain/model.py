@@ -161,8 +161,10 @@ class FonePretrainModel(nn.Module):
         logits = self.lm_head(h)
         lm_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1),
                                   ignore_index=-100)
+        # digit_acc is NaN for baseline (no digit head -- not a real 1.0, don't plot/average
+        # it against the FoNE variants' digit_acc; see doc/tracking.md failed-jobs entry)
         out = {"lm_loss": lm_loss, "num_loss": torch.zeros_like(lm_loss),
-               "digit_acc": torch.ones((), device=idx.device)}
+               "digit_acc": torch.full((), float("nan"), device=idx.device)}
         if self.cfg.embed_mode != "baseline":
             # masked mean instead of boolean indexing: static shapes for torch.compile
             tmask = (targets == self.cfg.num_token_id).float()                # (B, T)
