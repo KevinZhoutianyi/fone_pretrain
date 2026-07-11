@@ -19,8 +19,9 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| login-node bg | data prep mix3b_fone v2 (doc-count budget) | running | §1 | 2,405,888 docs, matches mix3b_baseline exactly; gates the 125M runs |
-| multi-agent review | exp 01 pre-training code review | complete | §1 | 2 confirmed defects (below), both fixed; 17 other candidate findings rejected on verification |
+| 234 | exp 01 125M fone (formal, 6000 steps / ~3.1B tokens) | running | §1 | ~1.1M tok/s, ETA ~3h; step 320: num_loss 0.30, digit_acc 0.92 |
+| 235 | exp 01 125M fone_learned (formal) | running | §1 | same schedule; freq_mult excluded from weight decay |
+| 236 | exp 01 125M baseline (formal) | running | §1 | resubmit of 233 excluding dirty node ip-10-4-120-250 |
 
 ---
 
@@ -35,6 +36,8 @@ paper.md, this row can be kept here as the historical record. -->
 | 216-218 | exp 01 smoke (20 steps, 3 variants) | §1 | all COMPLETED; fone num_loss 2.52->0.93, digit_acc 0.10->0.85; S3 sync verified |
 | 220 | exp 01 smoke rerun (static-shape check) | §1 | 3/3 PASS, 0 autograd warnings, fone throughput 21.5k->55.8k tok/s |
 | data prep mix3b_baseline | exp 01 data | §1 | 3.2B tokens, 2,405,888 docs, 33 shards, DONE |
+| data prep mix3b_fone v2 | exp 01 data | §1 | 3.1B tokens over the SAME 2,405,888 docs as baseline (doc-count budget), 31 shards, DONE |
+| 232 (smoke4) | exp 01 smoke on final data, clean node | §1 | 3/3 PASS; baseline digit_acc now null (not fake 1.0); post-review code all works together |
 
 ---
 
@@ -46,6 +49,7 @@ gets re-attempted blindly. -->
 
 | job | exp | failure mode | resolution |
 |---|---|---|---|
+| 233 | exp 01 125M baseline v1 | landed on ip-10-4-120-250 which has a stray process holding 74/80GB on every GPU (also killed smoke3 there); our job OOMed at startup | resubmitted as 236 with --exclude=ip-10-4-120-250; node reported to no avail so far -- exclude it in future submissions until it drains |
 | 214 | exp 01 smoke v1 (srun loop) | srun spawned 4 duplicate torchruns (192 cpu / 48 cpu-per-task), rendezvous collided, variants reported bit-identical metrics | --ntasks=1 everywhere; resubmitted as sbatch 216-218 |
 | 214 | same | configs/data on login-node /tmp scratchpad invisible to compute nodes | smoke assets moved to /fsx/zhouty/data/fone_pretrain/smoke/ |
 | 217/218 v1 | fone smokes | torch.compile: boolean-index embed -> per-step recompiles + IndexPutBackward autograd errors (recovered eager, slow) | dense masked ops, static shapes; rerun as 219 |
