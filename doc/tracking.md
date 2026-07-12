@@ -19,7 +19,7 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| (none) | exp 02 llama3 chunk FoNE | code ready, not launched | §1 | chunk-based FoNE via effective tied weight (code on both read and write sides); fone=3 fixed periods (6d), fone_learned=3+20 learnable periods (46d); 17/17 CPU tests + forward/backward + tie-sharing verified; data prep not yet run |
+| (none) | exp 02 llama3 chunk FoNE | code ready, not launched | §1 | chunk-based FoNE via effective tied weight (code on both read and write sides); fone=3 fixed periods (6d), fone_learned=3+20 learnable periods (46d); learnable code scale (init 0.02) aligns init loss across variants (4.375/4.371/4.393); 20/20 CPU tests + tie-sharing verified; data prep not yet run |
 
 ---
 
@@ -77,9 +77,8 @@ otherwise the queue drifts away from the paper's argument. -->
    by watching total_tokens approach ~3.1B. CPU-only on login node, hours.
 3. **125M pipeline-validation runs, all three variants** — serves paper.md §1.
    Smoke (20 steps, --smoke) first, then one node 8×H100 each, ~3B tokens; check LM loss
-   converges. Note the FoNE variants start at a higher loss than baseline (injected code
-   rows are larger-norm than the 0.02 learned rows); the check is that it falls, not that
-   it starts low.
+   converges. A learnable code scale (init 0.02) aligns the three variants' init loss to
+   within 0.02, so they start together; the check is that all three fall and converge.
 4. **350M formal three-variant comparison, 10B+ tokens** — serves paper.md §2.
    The equal-token-budget comparison that isolates the embedding as the cause.
 5. **Number eval suite incl. frontier-model comparison** — serves paper.md §3.

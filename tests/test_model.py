@@ -12,7 +12,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from fone_pretrain.model import FonePretrainModel, ModelConfig  # noqa: E402
-from fone_pretrain.number_embed import build_number_token_maps, freq_code  # noqa: E402
+from fone_pretrain.number_embed import build_number_token_maps  # noqa: E402
 
 
 class FakeTokenizer:
@@ -36,9 +36,9 @@ def test_effective_weight_injects_code_into_number_rows():
     m, is_num, value = _model("fone")
     W = m.effective_weight()
     F_ = m.num_code.n_dims
-    for tid in torch.nonzero(is_num).squeeze(-1).tolist():
-        expect = freq_code(value[tid:tid + 1], m.num_code.log_periods)[0]
-        assert torch.allclose(W[tid, :F_], expect, atol=1e-5), tid
+    code = m.num_code()   # scaled code, ordered by num_ids
+    for row, tid in enumerate(m.num_code.num_ids.tolist()):
+        assert torch.allclose(W[tid, :F_], code[row], atol=1e-5), tid
     # a non-number row is untouched (equals the raw table)
     non = int(torch.nonzero(~is_num).squeeze(-1)[0])
     assert torch.allclose(W[non], m.tok_emb.weight[non])
@@ -90,3 +90,18 @@ def test_learned_periods_train():
     m(idx, targets=idx.clone())["loss"].backward()
     lp = m.num_code.log_periods
     assert lp.grad is not None and lp.grad.abs().sum() > 0
+    assert m.num_code.scale.grad is not None and m.num_code.scale.grad.abs() > 0
+
+
+def test_init_loss_aligned_across_variants():
+    # the code scale (init 0.02) keeps number rows at the same magnitude as learned rows,
+    # so at init the three variants share a starting loss instead of the FoNE ones blowing up.
+    idx = torch.randint(0, len(VOCAB), (4, 16))
+    tgt = torch.randint(0, len(VOCAB), (4, 16))
+    losses = {}
+    for mode in ["baseline", "fone", "fone_learned"]:
+        m, _, _ = _model(mode)
+        losses[mode] = m(idx, targets=tgt)["loss"].item()
+    # all three within a small band of baseline (was ~1.5-19 apart before the scale)
+    assert abs(losses["fone"] - losses["baseline"]) < 0.3, losses
+    assert abs(losses["fone_learned"] - losses["baseline"]) < 0.3, losses

@@ -74,12 +74,13 @@ def main():
     if ddp:
         model = torch.nn.parallel.DistributedDataParallel(model)
 
-    # log_periods (fone_learned only) are the learnable Fourier periods; weight decay
-    # would drag them toward log-period 0 (period 1), collapsing every chunk's code to a
-    # constant and destroying the number signal. Exclude from decay; everything else
+    # The FoNE code params (num_code.scale, and num_code.log_periods for fone_learned)
+    # define the number signal, not ordinary weights. Weight decay would shrink the scale
+    # toward 0 (erasing the code) and drag log_periods toward period 1 (collapsing every
+    # chunk's code to a constant). Exclude the whole num_code submodule; everything else
     # keeps the original rate.
-    no_decay = [p for n, p in raw.named_parameters() if n.endswith("log_periods")]
-    decay = [p for n, p in raw.named_parameters() if not n.endswith("log_periods")]
+    no_decay = [p for n, p in raw.named_parameters() if ".num_code." in n or n.startswith("num_code.")]
+    decay = [p for n, p in raw.named_parameters() if not (".num_code." in n or n.startswith("num_code."))]
     opt = torch.optim.AdamW(
         [{"params": decay, "weight_decay": 0.1}, {"params": no_decay, "weight_decay": 0.0}],
         lr=cfg["lr"], betas=(0.9, 0.95), fused=True)

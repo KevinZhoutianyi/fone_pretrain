@@ -16,6 +16,14 @@ The code for a value v at period T is (cos 2πv/T, sin 2πv/T). Two variants:
                    values are small (0..999) the periods are learned directly on the
                    value, with no phase-normalization trick.
 
+Raw cos/sin are O(1), ~50x the 0.02-scale learned embedding rows, so an untouched code
+would make the number rows' norm dominate and blow up the init logits/loss. Both
+variants multiply the code by a single learnable scalar `scale` (init 0.02, matched to
+the embedding init), so the number rows start at the same magnitude as the rest of the
+table and the three variants share a starting loss. The scalar is global (not per-period
+or per-dim): scaling the whole code preserves the cos/sin geometry that makes it
+injective over 0..999, while letting the model learn how strongly to rely on it.
+
 Face value only: a chunk's code depends on its 3 digits, not on where the chunk sits
 in a larger number. Place value is left to token position and attention.
 """
@@ -70,7 +78,7 @@ class ChunkFreqCode(nn.Module):
     """
 
     def __init__(self, is_number_token: torch.Tensor, token_value: torch.Tensor,
-                 learned: bool, n_learned_freq: int = 20):
+                 learned: bool, n_learned_freq: int = 20, scale_init: float = 0.02):
         super().__init__()
         ids = torch.nonzero(is_number_token, as_tuple=False).squeeze(-1)  # (n_num,)
         self.register_buffer("num_ids", ids)
@@ -83,7 +91,8 @@ class ChunkFreqCode(nn.Module):
             self.log_periods = nn.Parameter(log_periods)
         else:
             self.register_buffer("log_periods", torch.tensor(FIXED_LOG_PERIODS))
+        self.scale = nn.Parameter(torch.tensor(scale_init))   # global code magnitude, matched to emb init
         self.n_dims = 2 * len(self.log_periods)   # F
 
     def forward(self) -> torch.Tensor:            # -> (n_num, F)
-        return freq_code(self.num_values, self.log_periods)
+        return self.scale * freq_code(self.num_values, self.log_periods)

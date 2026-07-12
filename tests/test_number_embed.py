@@ -80,8 +80,27 @@ def test_fixed_periods_are_frozen_buffer():
     m = ChunkFreqCode(is_num, value, learned=False)
     assert m.n_dims == 2 * N_FIXED_PERIODS               # 6
     assert not isinstance(m.log_periods, torch.nn.Parameter)  # frozen
+    assert isinstance(m.scale, torch.nn.Parameter)       # scale IS learnable, even for fone
     assert m.num_ids.tolist() == [1, 2, 3, 4]            # the 4 number tokens
     assert m().shape == (4, 6)                           # (n_num, F)
+
+
+def test_scale_matches_init_and_multiplies_code():
+    is_num, value = _maps()
+    m = ChunkFreqCode(is_num, value, learned=False, scale_init=0.02)
+    assert abs(m.scale.item() - 0.02) < 1e-9
+    # forward output == scale * raw code
+    raw = freq_code(m.num_values, m.log_periods)
+    assert torch.allclose(m(), 0.02 * raw, atol=1e-9)
+    # rows are ~0.02 in magnitude, not O(1)
+    assert m().abs().max().item() < 0.05
+
+
+def test_scale_receives_gradient():
+    is_num, value = _maps()
+    m = ChunkFreqCode(is_num, value, learned=False)
+    m().sum().backward()
+    assert m.scale.grad is not None and m.scale.grad.abs().item() > 0
 
 
 def test_learned_has_23_periods_all_trainable():

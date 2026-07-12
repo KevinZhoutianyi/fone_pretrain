@@ -30,7 +30,7 @@ periods train normally.
 | data | mix3b_llama3: FineWeb-Edu 70% + FineMath-4plus 30%; ONE dataset shared by all three variants |
 | variants | fone: 3 fixed periods (10/100/1000), F=6 dims, frozen. fone_learned: 3 base + 20 extra learnable periods (log-uniform in [10,1000]), F=46 dims, all periods trainable |
 | budget | 6000 steps × 524k tokens = ~3.1B tokens |
-| optimizer | AdamW lr 6e-4, cosine to 10%, warmup 120, bf16, grad clip 1.0; log_periods (fone_learned) excluded from weight decay |
+| optimizer | AdamW lr 6e-4, cosine to 10%, warmup 120, bf16, grad clip 1.0; num_code params (code scale, and log_periods for fone_learned) excluded from weight decay |
 | hardware | one 8×H100 node per variant, DDP |
 
 All three variants read the identical token stream: tokenization does not depend on the
@@ -48,11 +48,14 @@ The 128k Llama-3 vocab is stored as uint32 (past uint16's 65535 ceiling) and mak
 tied embedding table ~98M params, so total parameter count is larger than 01's TinyLlama
 runs. The three variants are still matched to each other.
 
-Init-loss caveat: injecting the code makes the number rows of the effective weight
-larger in norm than the 0.02-scale learned rows, so at step 0 the FoNE variants show a
-higher LM loss than baseline (fone > baseline, fone_learned highest with 46 dims). This
-is a transient starting-point effect, not divergence; the § 1 check is that it falls and
-converges, not that it starts low.
+Init-scale control: raw cos/sin are O(1), ~50x the 0.02-scale learned rows, which alone
+would make the number rows dominate and blow up the init loss. Both variants multiply
+the code by a single learnable scalar (init 0.02, matched to the embedding init), so the
+number rows start at the same magnitude as the rest of the table. Verified at d_model=768:
+the three variants' init losses agree to within 0.02 (baseline 4.375, fone 4.371,
+fone_learned 4.393), versus a ~1.5-19 gap without the scalar. The scalar is learnable
+(excluded from weight decay), so the model can still decide how strongly to rely on the
+code; it is global, not per-period, to preserve the cos/sin geometry.
 
 ## How to run
 
@@ -73,9 +76,10 @@ srun --gres=gpu:1 ... python -m fone_pretrain.eval_numbers \
 
 | check | result |
 |---|---|
-| unit tests (token map, code injectivity over 0-999, fixed/learned period setup, uint32 round-trip) | 17/17 green |
+| unit tests (token map, code injectivity, period setup, code scale, uint32 round-trip) | 20/20 green |
 | read == write share the code (tied weight) | verified: number row of input embedding equals output-projection row equals the code |
-| overwritten code dims get zero gradient (frozen); learned tail + log_periods train | verified at d_model=768 |
+| overwritten code dims get zero gradient (frozen); learned tail + log_periods + scale train | verified at d_model=768 |
+| init loss aligned across variants (code scale) | verified: baseline 4.375, fone 4.371, fone_learned 4.393 (within 0.02) |
 | CPU forward/backward, all 3 variants | pass |
 | log_periods decay-exclusion finds it by name (`num_code.log_periods`) | verified |
 | data prep | not yet run |
