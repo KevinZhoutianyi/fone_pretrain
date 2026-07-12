@@ -12,7 +12,7 @@ set -euo pipefail
 cd /fsx/zhouty/fone_pretrain
 
 SMOKE="${1:-}"
-EXCLUDE="--exclude=ip-10-4-120-250"   # node with a stray GPU-hogging process (see tracking.md)
+EXCLUDE="--exclude=ip-10-4-120-250,ip-10-4-102-38"   # nodes with stray GPU-hogging processes (see tracking.md)
 
 CONFIGS=(
   llama3_baseline               # 1. control

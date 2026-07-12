@@ -19,8 +19,7 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| data prep (CPU, bg) | chunk_fone | running | §1 | tokenizing FineWeb-Edu 70% + FineMath 30% with Llama-3 into mix3b_llama3 (--docs 3M, target >=3.2B tokens); one shared dataset for all variants; number-chunk map built (1110/128256 tokens). ~3h. Blocks all training. |
-| (none) | chunk_fone training | code ready, waiting on data | §1 | chunk-based FoNE via effective tied weight (code on both read and write sides); fone=3 fixed periods (6d), fone_learned=3+20 learnable periods (46d); learnable code scale (init 0.02) aligns init loss across variants (4.375/4.371/4.393); 20/20 CPU tests + tie-sharing verified |
+| 319-327 | chunk_fone design sweep | running | §1 | 9-run design-variant wave, ~3.1B tokens each, one 8xH100 node per run. 3 headline (baseline / fone 6d / fone_learned 46d) + 6 ablations (12d fixed, 86d learned, learn-freq at 6d, scale-frozen x2, seed-2 band). All isolate one FoNE design knob; questions in experiments/chunk_fone/README.md. |
 
 ---
 
@@ -32,7 +31,9 @@ paper.md, this row can be kept here as the historical record. -->
 
 | job | exp | serves paper.md § | result (one-line) |
 |---|---|---|---|
-| (no job) | chunk-FoNE core | §1 | 20/20 CPU tests + d_model=768 forward/backward green; tie-sharing (read==write share the code), zero-grad on frozen code dims, learnable periods + scale train, init loss aligned across variants (4.375/4.371/4.393) all verified |
+| (no job) | chunk-FoNE core | §1 | 21/21 CPU tests + d_model=768 forward/backward green; tie-sharing (read==write share the code), zero-grad on frozen code dims, learnable periods + scale train, init loss aligned across variants (4.375/4.371/4.393) all verified |
+| data prep mix3b_llama3 | chunk_fone data | §1 | 3,391,139,029 Llama-3 tokens over 3,000,320 docs, 34 shards, uint32; number-chunk map 1110/128256; one shared dataset for all variants; DONE |
+| 309-318 (smoke) | chunk_fone 9-variant smoke | §1 | 9/9 PASS (20 steps): loss 11.9->7.78, ~36-58k tok/s; all variants converge to near-identical loss this early (numbers sparse); baseline retried once (309 hit a dirty node, 318 clean) |
 
 <!-- The single-`<NUM>`-per-number design (exp 01: whole number -> one <NUM> token +
 15-digit sidecar + output digit head) was replaced by chunk-based FoNE and its jobs
@@ -54,7 +55,7 @@ static-shape effective_weight). Kept so the same mistakes are not repeated. -->
 
 | job | exp | failure mode | resolution |
 |---|---|---|---|
-| node OOM | any GPU run | ip-10-4-120-250 had a stray process holding 74/80GB on every GPU; jobs landing there OOM at startup | submit with `--exclude=ip-10-4-120-250` until the node drains |
+| node OOM | any GPU run | ip-10-4-120-250 and ip-10-4-102-38 each had a stray process holding ~70/80GB on every GPU; jobs landing there OOM at startup (309 baseline smoke hit ip-10-4-102-38, retried clean as 318) | submit with `--exclude=ip-10-4-120-250,ip-10-4-102-38` (baked into scripts/launch_sweep.sh) until they drain |
 | srun loop | training launch | srun without `--ntasks=1` spawned 4 duplicate torchruns (192 cpu / 48 cpu-per-task), rendezvous collided, variants reported bit-identical metrics | `--ntasks=1` in train.sbatch (load-bearing, commented there) |
 | login /tmp | any run | configs/data on login-node /tmp are invisible to compute nodes | all run assets live under /fsx/zhouty/data/fone_pretrain/ |
 | torch.compile recompiles | embed/loss | boolean-index embedding -> dynamic shapes -> per-step recompiles + IndexPutBackward autograd errors | static-shape ops only; the current effective_weight uses index_copy over a fixed id set, no boolean indexing |
