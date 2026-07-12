@@ -19,7 +19,7 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| (none) | exp 02 llama3 chunk FoNE | code ready, not launched | §1 | design switched from single-`<NUM>` to chunk-based FoNE (see decisions row); CPU tests + forward/backward green; data prep not yet run |
+| (none) | exp 02 llama3 chunk FoNE | code ready, not launched | §1 | chunk-based FoNE via effective tied weight (code on both read and write sides); fone=3 fixed periods (6d), fone_learned=3+20 learnable periods (46d); 17/17 CPU tests + forward/backward + tie-sharing verified; data prep not yet run |
 
 ---
 
@@ -31,7 +31,7 @@ paper.md, this row can be kept here as the historical record. -->
 
 | job | exp | serves paper.md § | result (one-line) |
 |---|---|---|---|
-| (design change, no job) | exp 01 -> 02 | §1 | switched from single-`<NUM>`-per-number (15-digit sidecar + output digit head) to chunk-based FoNE: numbers stay as Llama-3's native <=3-digit chunk tokens; the fixed 6-dim Fourier code of a chunk's face value overwrites the first 6 embedding dims, rest learned. No `<NUM>` token, no sidecar, no digit head, no aux loss. All 3 variants now share ONE tokenization (only the embedding differs), a cleaner control than 01. Old single-`<NUM>` code lives in git history; configs/125m_*.yaml retained. |
+| (design change, no job) | exp 01 -> 02 | §1 | switched from single-`<NUM>`-per-number (15-digit sidecar + output digit head) to chunk-based FoNE: numbers stay as Llama-3's native <=3-digit chunk tokens; a Fourier code of the chunk's face value is written into the first F embedding dims, rest learned. Injected into the TIED weight (effective weight recomputed each step) so read and write share the same code; no `<NUM>` token, no sidecar, no digit head, no aux loss. fone=3 fixed periods (6d, frozen); fone_learned=3 base + 20 extra learnable periods (46d). All 3 variants share ONE tokenization (only the embedding differs), a cleaner control than 01. Old single-`<NUM>` code lives in git history; configs/125m_*.yaml retained. |
 | 216-218 | exp 01 smoke (20 steps, 3 variants) | §1 (historical, single-`<NUM>` design) | all COMPLETED; fone num_loss 2.52->0.93, digit_acc 0.10->0.85; S3 sync verified |
 | 220 | exp 01 smoke rerun (static-shape check) | §1 | 3/3 PASS, 0 autograd warnings, fone throughput 21.5k->55.8k tok/s |
 | data prep mix3b_baseline | exp 01 data | §1 | 3.2B tokens, 2,405,888 docs, 33 shards, DONE |
@@ -65,9 +65,10 @@ gets re-attempted blindly. -->
 otherwise the queue drifts away from the paper's argument. -->
 
 1. **Unit-test chunk-based FoNE core (CPU)** — serves paper.md §1. DONE.
-   Correctness gate before any GPU spend; pytest on the number-chunk token map,
-   6-dim code injectivity over 0-999, learned-init parity, uint32 round-trip (11/11);
-   plus a CPU forward/backward for all three variants and a freq_mult gradient check.
+   Correctness gate before any GPU spend; pytest on the number-chunk token map, code
+   injectivity over 0-999, fixed vs learned period setup, uint32 round-trip, and the
+   tie-sharing property (input embedding row == output-projection row == code), 17/17;
+   plus CPU forward/backward for all three variants and a log_periods gradient check.
 2. **Prepare data over one shared tokenization** — serves paper.md §1.
    FineWeb-Edu 70% + FineMath 30%, Llama-3 tokenizer (numbers auto-chunk to <=3 digits),
    budgeted by document count. One dataset feeds all three variants: tokenization does
@@ -76,7 +77,9 @@ otherwise the queue drifts away from the paper's argument. -->
    by watching total_tokens approach ~3.1B. CPU-only on login node, hours.
 3. **125M pipeline-validation runs, all three variants** — serves paper.md §1.
    Smoke (20 steps, --smoke) first, then one node 8×H100 each, ~3B tokens; check LM loss
-   converges and fone == fone_learned at step 0.
+   converges. Note the FoNE variants start at a higher loss than baseline (injected code
+   rows are larger-norm than the 0.02 learned rows); the check is that it falls, not that
+   it starts low.
 4. **350M formal three-variant comparison, 10B+ tokens** — serves paper.md §2.
    The equal-token-budget comparison that isolates the embedding as the cause.
 5. **Number eval suite incl. frontier-model comparison** — serves paper.md §3.

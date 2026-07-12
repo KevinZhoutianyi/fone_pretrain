@@ -60,7 +60,7 @@ def main():
     mcfg = ModelConfig(
         vocab_size=man["vocab_size"], n_layer=cfg["n_layer"], n_head=cfg["n_head"],
         d_model=cfg["d_model"], d_ff=cfg["d_ff"], max_seq_len=cfg["seq_len"],
-        embed_mode=cfg["embed_mode"],
+        embed_mode=cfg["embed_mode"], n_learned_freq=cfg.get("n_learned_freq", 20),
     )
     # number-chunk maps (is_number_token, token_value) are precomputed by prepare_data.py
     # and saved next to the shards; baseline does not need them.
@@ -74,12 +74,12 @@ def main():
     if ddp:
         model = torch.nn.parallel.DistributedDataParallel(model)
 
-    # freq_mult (fone_learned only) is initialized to 1.0 so it starts exactly
-    # equivalent to the fixed FoNE variant; global weight decay would drag it toward
-    # 0, where cos/sin of the phase collapses to a constant and destroys the number
-    # signal entirely. Exclude it from decay; everything else keeps the original rate.
-    no_decay = [p for n, p in raw.named_parameters() if n.endswith("freq_mult")]
-    decay = [p for n, p in raw.named_parameters() if not n.endswith("freq_mult")]
+    # log_periods (fone_learned only) are the learnable Fourier periods; weight decay
+    # would drag them toward log-period 0 (period 1), collapsing every chunk's code to a
+    # constant and destroying the number signal. Exclude from decay; everything else
+    # keeps the original rate.
+    no_decay = [p for n, p in raw.named_parameters() if n.endswith("log_periods")]
+    decay = [p for n, p in raw.named_parameters() if not n.endswith("log_periods")]
     opt = torch.optim.AdamW(
         [{"params": decay, "weight_decay": 0.1}, {"params": no_decay, "weight_decay": 0.0}],
         lr=cfg["lr"], betas=(0.9, 0.95), fused=True)

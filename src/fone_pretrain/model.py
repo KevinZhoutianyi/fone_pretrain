@@ -1,11 +1,13 @@
 """nanoGPT-style Llama decoder with chunk-based FoNE number embedding.
 
 Architecture: RMSNorm, RoPE, SwiGLU, no biases, tied input/output embeddings.
-The only novelty is in embed(): if `embed_mode` is a FoNE variant, the first 6
-dimensions of pure-digit chunk tokens (values 0..999) are overwritten with a fixed
-Fourier code of the chunk's value; all other dimensions stay learned. There is no
-<NUM> token, no digit sidecar, and no output-side decode head -- the ordinary
-next-token cross-entropy over the vocab supervises numbers.
+The only novelty is the effective weight matrix: if `embed_mode` is a FoNE variant,
+the first F dimensions of pure-digit chunk tokens (values 0..999) carry a Fourier
+code of the chunk's value; all other dimensions stay learned. Because input embedding
+and output projection share one weight, injecting the code makes both the read side
+(lookup) and the write side (logits) see the same code. There is no <NUM> token, no
+digit sidecar, and no output-side decode head -- ordinary next-token cross-entropy
+over the vocab supervises numbers.
 """
 
 import os
@@ -15,7 +17,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .number_embed import FIXED_DIMS, ChunkFoneEmbed, ChunkFoneLearnedEmbed
+from .number_embed import ChunkFreqCode
 
 
 @dataclass
@@ -28,6 +30,7 @@ class ModelConfig:
     max_seq_len: int = 2048
     rope_theta: float = 10000.0
     embed_mode: str = "baseline"   # baseline | fone | fone_learned
+    n_learned_freq: int = 20       # extra learnable periods for fone_learned
 
 
 # === building blocks ===
@@ -103,14 +106,17 @@ class FonePretrainModel(nn.Module):
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.blocks = nn.ModuleList(Block(cfg) for _ in range(cfg.n_layer))
         self.ln_f = RMSNorm(cfg.d_model)
-        self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
-        self.lm_head.weight = self.tok_emb.weight  # tied
+        # output is tied to tok_emb: forward() projects with effective_weight() (the
+        # tied table with the FoNE code injected), so no separate lm_head is needed.
 
         if cfg.embed_mode != "baseline":
             assert is_number_token is not None and token_value is not None, \
                 "fone modes need is_number_token/token_value"
-            cls = ChunkFoneEmbed if cfg.embed_mode == "fone" else ChunkFoneLearnedEmbed
-            self.num_in = cls(is_number_token, token_value)
+            self.num_code = ChunkFreqCode(is_number_token, token_value,
+                                          learned=(cfg.embed_mode == "fone_learned"),
+                                          n_learned_freq=cfg.n_learned_freq)
+            assert self.num_code.n_dims <= cfg.d_model, \
+                f"FoNE code needs {self.num_code.n_dims} dims but d_model={cfg.d_model}"
 
         self.apply(self._init)
         n_params = sum(p.numel() for p in self.parameters())
@@ -124,25 +130,29 @@ class FonePretrainModel(nn.Module):
         elif isinstance(m, nn.Embedding):
             nn.init.normal_(m.weight, std=0.02)
 
-    def embed(self, idx: torch.Tensor) -> torch.Tensor:
-        """Token embeddings; overwrite the first 6 dims of number-chunk tokens with the
-        fixed Fourier code of their value. All other tokens/dims stay learned.
+    def effective_weight(self) -> torch.Tensor:
+        """The tied weight with the Fourier code written into number-chunk rows.
 
-        Dense mask-blend on purpose: boolean indexing gives dynamic shapes, which made
-        torch.compile recompile every step. Gathering the code for every position and
-        blending by a 0/1 mask is static-shape.
+        For each number-chunk token, the first F dims are replaced by its code (a
+        function of the periods) and the remaining dims keep the learned values. Used
+        for BOTH the input lookup and the output logits, so reading and generating a
+        number share the same code. The overwritten entries of tok_emb.weight receive
+        no gradient (they are never used), so they are effectively frozen; the learned
+        tail and the learnable periods (fone_learned) train normally.
         """
-        x = self.tok_emb(idx)
-        if self.cfg.embed_mode != "baseline":
-            code, is_num = self.num_in(idx)                          # (B,T,6), (B,T,1)
-            head = is_num * code.to(x.dtype) + (1 - is_num) * x[..., :FIXED_DIMS]
-            x = torch.cat([head, x[..., FIXED_DIMS:]], dim=-1)
-        return x
+        W = self.tok_emb.weight
+        if self.cfg.embed_mode == "baseline":
+            return W
+        F_ = self.num_code.n_dims
+        ids = self.num_code.num_ids
+        code = self.num_code().to(W.dtype)                       # (n_num, F)
+        rows = torch.cat([code, W[ids, F_:]], dim=1)             # (n_num, d_model)
+        return W.index_copy(0, ids, rows)                        # out-of-place, autograd-safe
 
-    def hidden(self, idx):
+    def hidden(self, idx, W):
         rot = rope_cache(self.cfg.max_seq_len, self.cfg.d_model // self.cfg.n_head,
                          self.cfg.rope_theta, idx.device)
-        x = self.embed(idx)
+        x = F.embedding(idx, W)
         for blk in self.blocks:
             x = blk(x, rot)
         return self.ln_f(x)
@@ -153,10 +163,11 @@ class FonePretrainModel(nn.Module):
 
         idx/targets: (B, T) shifted-by-one token ids (numbers are ordinary chunk tokens).
         """
+        W = self.effective_weight()
         if targets is None:
-            return self.hidden(idx)
-        h = self.hidden(idx)
-        logits = self.lm_head(h)
+            return self.hidden(idx, W)
+        h = self.hidden(idx, W)
+        logits = F.linear(h, W)                                   # tied output, same code
         lm_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1),
                                   ignore_index=-100)
         return {"lm_loss": lm_loss, "loss": lm_loss}

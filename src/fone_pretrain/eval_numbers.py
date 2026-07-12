@@ -88,11 +88,12 @@ class CkptRunner:
     def generate(self, prompt: str, max_new: int = 24) -> str:
         """Greedy decode. Numbers are ordinary chunk tokens, so no special handling."""
         ids = self.tok(prompt, add_special_tokens=False)["input_ids"]
+        W = self.model.effective_weight()   # same code on the output side as at train time
         pieces = []
         for _ in range(max_new):
             idx = torch.tensor([ids], device=self.device)
             h = self.model(idx)[0, -1]
-            nxt = int(self.model.lm_head(h).argmax())
+            nxt = int((h @ W.T).argmax())
             if nxt == self.tok.eos_token_id:
                 break
             pieces.append(self.tok.decode([nxt]))

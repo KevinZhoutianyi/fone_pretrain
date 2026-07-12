@@ -1,10 +1,11 @@
 """Correctness gate for the chunk-based FoNE core before any GPU spend.
 
-Covers: number-chunk token map (which ids are 1-3 digit chunks and their values),
-the 6-dim fixed code being injective over 0..999, and the learned-freq variant
-starting exactly equal to the fixed variant.
+Covers: the number-chunk token map, the Fourier code, the fixed vs learned period
+setup, and (in test_model.py) that reading and writing a number share the same code
+via the tied weight.
 """
 
+import math
 import sys
 from pathlib import Path
 
@@ -12,8 +13,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from fone_pretrain.number_embed import (  # noqa: E402
-    FIXED_DIMS, ChunkFoneEmbed, ChunkFoneLearnedEmbed,
-    build_number_token_maps, chunk_fixed_code,
+    N_FIXED_PERIODS, ChunkFreqCode, build_number_token_maps, freq_code,
 )
 
 
@@ -35,16 +35,12 @@ class FakeTokenizer:
 def test_token_map_flags_digit_chunks():
     vocab = ["hello", "123", " 42", "9", "1000", "12.5", "ab3", " 007", "", "999"]
     is_num, value = build_number_token_maps(FakeTokenizer(vocab))
-    # pure 1-3 digit chunks, with or without a leading space
     assert is_num.tolist() == [False, True, True, True, False, False, False, True, False, True]
-    # values are face value; " 42" -> 42, " 007" -> 7
     assert value[1].item() == 123
-    assert value[2].item() == 42
-    assert value[3].item() == 9
-    assert value[7].item() == 7
+    assert value[2].item() == 42     # " 42" -> 42
+    assert value[7].item() == 7      # " 007" -> 7
     assert value[9].item() == 999
-    # non-number tokens carry value 0
-    assert value[0].item() == 0 and value[4].item() == 0
+    assert value[0].item() == 0 and value[4].item() == 0   # non-numbers carry 0
 
 
 def test_token_map_rejects_4_digit_and_nondigit():
@@ -54,44 +50,55 @@ def test_token_map_rejects_4_digit_and_nondigit():
     assert value[4].item() == 0
 
 
-# === fixed 6-dim code ===
-def test_code_shape():
-    values = torch.arange(0, 1000)
-    assert chunk_fixed_code(values).shape == (1000, FIXED_DIMS)
+# === Fourier code ===
+def test_code_shape_and_manual_phase():
+    lp = torch.tensor([math.log(10.0), math.log(100.0), math.log(1000.0)])
+    code = freq_code(torch.tensor([123]), lp)
+    assert code.shape == (1, 2 * 3)
+    # value 123: 123/10 -> phase 0.3, 123/100 -> 0.23, 123/1000 -> 0.123
+    for k, p in enumerate([0.3, 0.23, 0.123]):
+        assert abs(code[0, 2 * k].item() - math.cos(2 * math.pi * p)) < 1e-5
+        assert abs(code[0, 2 * k + 1].item() - math.sin(2 * math.pi * p)) < 1e-5
 
 
-def test_code_injective_over_0_999():
-    # the 6-dim code must separate all 1000 chunk values (else two numbers collide)
-    codes = chunk_fixed_code(torch.arange(0, 1000))
-    # pairwise nearest-neighbor distance > 0: round to 6 decimals and require 1000 uniques
+def test_fixed_code_injective_over_0_999():
+    # the 3-period fixed code must separate all 1000 chunk values (else two numbers collide)
+    lp = torch.tensor([math.log(10.0), math.log(100.0), math.log(1000.0)])
+    codes = freq_code(torch.arange(0, 1000), lp)
     keys = {tuple(torch.round(c, decimals=6).tolist()) for c in codes}
     assert len(keys) == 1000
 
 
-def test_code_matches_manual_phase():
-    # value 123: frac(123/10)=0.3, frac(123/100)=0.23, frac(123/1000)=0.123
-    import math
-    code = chunk_fixed_code(torch.tensor([123]))[0]
-    for k, p in enumerate([0.3, 0.23, 0.123]):
-        assert abs(code[2 * k].item() - math.cos(2 * math.pi * p)) < 1e-5
-        assert abs(code[2 * k + 1].item() - math.sin(2 * math.pi * p)) < 1e-5
+# === ChunkFreqCode: fixed vs learned ===
+def _maps():
+    vocab = ["x", "123", " 42", "9", "999", "y"]
+    return build_number_token_maps(FakeTokenizer(vocab))
 
 
-# === learned-freq variant: init must equal fixed ===
-def test_learned_init_matches_fixed():
-    vocab = ["x", "123", " 42", "9", "999"]
-    is_num, value = build_number_token_maps(FakeTokenizer(vocab))
-    fixed, learned = ChunkFoneEmbed(is_num, value), ChunkFoneLearnedEmbed(is_num, value)
-    idx = torch.tensor([[0, 1, 2, 3, 4]])
-    fc, fm = fixed(idx)
-    lc, lm = learned(idx)
-    assert torch.allclose(fc, lc, atol=1e-5), (fc - lc).abs().max()
-    assert torch.equal(fm, lm)
+def test_fixed_periods_are_frozen_buffer():
+    is_num, value = _maps()
+    m = ChunkFreqCode(is_num, value, learned=False)
+    assert m.n_dims == 2 * N_FIXED_PERIODS               # 6
+    assert not isinstance(m.log_periods, torch.nn.Parameter)  # frozen
+    assert m.num_ids.tolist() == [1, 2, 3, 4]            # the 4 number tokens
+    assert m().shape == (4, 6)                           # (n_num, F)
 
 
-def test_learned_freq_mult_shape():
-    is_num = torch.tensor([False, True])
-    value = torch.tensor([0, 5])
-    learned = ChunkFoneLearnedEmbed(is_num, value)
-    assert learned.freq_mult.shape == (FIXED_DIMS // 2,)
-    assert torch.allclose(learned.freq_mult, torch.ones(FIXED_DIMS // 2))
+def test_learned_has_23_periods_all_trainable():
+    is_num, value = _maps()
+    m = ChunkFreqCode(is_num, value, learned=True, n_learned_freq=20)
+    assert m.n_dims == 2 * 23                             # 3 base + 20 extra
+    assert isinstance(m.log_periods, torch.nn.Parameter)
+    assert m.log_periods.numel() == 23
+    # first 3 periods initialized to the fixed base 10/100/1000
+    assert torch.allclose(m.log_periods[:3],
+                          torch.tensor([math.log(10.0), math.log(100.0), math.log(1000.0)]), atol=1e-6)
+    assert m().shape == (4, 46)
+
+
+def test_learned_periods_receive_gradient():
+    is_num, value = _maps()
+    m = ChunkFreqCode(is_num, value, learned=True, n_learned_freq=20)
+    m().sum().backward()
+    assert m.log_periods.grad is not None
+    assert m.log_periods.grad.abs().sum() > 0
