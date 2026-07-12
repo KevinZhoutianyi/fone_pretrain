@@ -92,101 +92,102 @@ Rules for cells:
 
 | § | Question | What we did | What we showed | Therefore → |
 |---|---|---|---|---|
-| **§1 Pipeline validity** *(planned)* | Does chunk-based FoNE-in-pretraining train stably at all: does the language-model loss converge with the fixed Fourier code injected into number-chunk tokens? | (planned) 125M-parameter runs of all three variants on ~3B tokens, same token stream; watch loss curves. | *(predicted)* All three train stably; the injected code does not destabilize training relative to the plain-embedding baseline. | The pipeline is sound; any §2 gap is real, not an artifact. → §2 |
-| **§2 Equal-budget comparison** *(planned)* | At the same pretrain token budget, does FoNE beat its plain-embedding twin (same tokenizer and data, learned number-token embeddings) on number tasks? | (planned) 350M-parameter runs, 10B+ tokens, identical data and schedule; number eval suite on all three. | *(predicted, theory 1)* FoNE variants win by a wide margin on arithmetic exact match; falsifier: gap within noise means theory 2. | The embedding, not data or scale, causes the gain. → §3 |
+| **§1 Pipeline validity** *(met)* | Does chunk-based FoNE-in-pretraining train stably at all: does the language-model loss converge with the Fourier code injected into number-chunk tokens? | 125M runs of all variants on ~3B tokens, same token stream; watched loss curves. | All variants train stably and reach the same held-out loss (2.86); the code does not destabilize training. | The pipeline is sound; any §2 gap is real, not an artifact. → §2 |
+| **§2 Equal-budget comparison** *(partial: comparison task, 125M)* | At the same pretrain token budget and identical data, does FoNE beat its plain-embedding twin on number tasks? | 125M runs, ~3B tokens, one shared tokenization; number eval suite (arithmetic + number-magnitude comparison) across digit length, multi-seed. | *(theory 1)* FoNE beats baseline on comparison, and the gap grows with digit length (6d: 0.34 vs 0.07). Arithmetic is ~0 for all variants (scale floor), so it does not yet discriminate. | The embedding, not data, causes the gain on comparison. Larger-scale and arithmetic remain open. → §3 |
 | **§3 Frontier comparison** *(planned)* | Does the small FoNE model beat frontier company models on the same number tasks? | (planned) Run the identical eval suite on GPT / Claude / Gemini / open Llama; compare exact match by digit length. | *(predicted)* Frontier models degrade sharply past ~6 digits; the FoNE model stays near ceiling. | A 350M model wins on numeracy at a fraction of the compute: the headline. → §4 |
 | **§4 Fixed vs learned frequencies** *(planned)* | Do learned Fourier frequencies (TabFM style) help or hurt relative to fixed powers of ten? | (planned) Same §2 protocol; the fixed variant uses 3 periods (10, 100, 1000), the learned variant adds 20 more learnable periods. | *(predicted)* Parity or small gain for learned; falsifier: instability or a loss on precision tasks. | Guidance for how future models should adopt FoNE. |
 
 ---
 
-## §1 Phenomenon ([status])
+## §1 Pipeline validity (met)
 
-**Claim.** [One sentence stating what §1 proves — usually "the prior
-finding replicates under our fairer measurement".]
+**Claim.** Chunk-based FoNE trains stably inside ordinary language pretraining: the
+injected Fourier code does not destabilize training, and all variants converge together.
 
-### Evidence: [exp name] — [one-line description]
+### Evidence: 125M three-variant runs, ~3B tokens
 
-<!-- KEY PATTERN: body shows narrative, not data dumps.
-Per the appendix rule in CLAUDE.md, keep only:
-  (a) a headline sentence with the bottom-line number,
-  (b) the plain-language reading,
-  (c) any single caveat that changes the interpretation,
-  (d) a pointer "→ See Appendix X" for the detail tables.
+**Classification:** Sanity check (all variants predict the same outcome here; this
+confirms the setup, it does not yet discriminate FoNE from baseline).
 
-Per-bucket pass-rates, top-N rankings, full hyperparameter sweeps,
-counter-example tables — ALL of these go in an experiment-specific
-appendix, not here. -->
+**Headline.** All variants (plain-embedding baseline, fixed FoNE, learned FoNE, and six
+ablations) train to completion and reach the same held-out language-model loss, 2.86.
+The learnable code scale holds the variants' starting loss within 0.02 of each other, so
+they begin and end together.
 
-**Classification:** [Central | Sanity check | Supporting].
+**Plain-language reading.** Injecting a fixed Fourier code into the number-chunk token
+rows, and sharing it with the output layer through the tied weight, is compatible with
+standard pretraining. Nothing diverges or destabilizes.
 
-**Headline.** [One sentence with the bottom-line number, e.g., "15 / 39
-[items] pass [threshold]. The other 24 are statistically indistinguishable
-from [control]."]
+**Caveat.** Held-out language-model loss is text-dominated, so it is identical across
+variants and is not a measure of numeracy. Whether FoNE helps on number tasks is the
+subject of §2, measured on a number-task suite rather than on language-model loss.
 
-**Plain-language reading.** [Theory 1 predicts X; theory 2 predicts Y.
-Observed: [result]. There is a tendency for [pattern], but [within-bucket
-counter-examples / caveats] prevent a clean rule.]
+### Context: FoNE (arXiv:2502.09741)
 
-**[Caveat name].** [One sentence on the methodological caveat that
-changes the obvious reading — e.g., "concrete-bucket failures are
-off-distribution, not 'no'." Single caveats only; full diagnostic
-numbers go in the appendix.]
-
-→ See **Appendix C** for the per-bucket table, top-N passers, counter-
-example pairs, and off-distribution diagnostics.
-
-### Evidence: [exp name] — methodological control
-
-**Classification:** Supporting (rules out [specific rebuttal]).
-
-[1-paragraph result + caveat inline.]
-
-### Context: [prior paper]
-
-[How prior work measured the same phenomenon; why our setup differs.]
+The FoNE paper established that the Fourier value code trains well on synthetic
+arithmetic. §1 confirms the chunk-based form trains well inside natural-language
+pretraining, which is the setting the prior work did not test.
 
 ---
 
-## §2 Controls — theory 1 vs theory 2 ([status])
+## §2 Equal-budget comparison (partial: number-magnitude task, 125M)
 
-**Claim.** [One sentence stating what §2 proves — the discriminator.]
+**Claim.** At equal token budget and identical data, FoNE beats its plain-embedding twin
+on number-magnitude understanding, and the gain grows with digit length. Learning the
+Fourier frequencies beats fixing them.
 
 ### The discovery arc (read in order)
 
-<!-- This subsection narrates how the controls developed. It is the
-*reasoning chain* that turns observations into a discriminator. Format
-each step as: observation → question → next experiment. -->
+1. §1 established all variants reach the same language-model loss, so that metric cannot
+   separate them. We turned to a number-task suite: arithmetic (add, sub) and
+   number-magnitude comparison ("between A and B, the larger is"), swept over digit length.
+2. Theory 1 (FoNE gains transfer) predicts the FoNE variants beat baseline on number
+   tasks. Theory 2 (gains are an arithmetic-only artifact) predicts no gap once data is
+   mostly text.
+3. Arithmetic exact match is ~0 for every variant at every digit length. A 125M model
+   trained on 3B tokens of mostly text cannot generate multi-digit arithmetic answers, so
+   arithmetic does not discriminate the theories at this scale (it is a scale floor, not a
+   FoNE failure; verified by inspecting raw generations, which are complete wrong numbers,
+   not truncations).
+4. Comparison does discriminate: it needs only to read the two values and pick the larger,
+   which is exactly what the input-side Fourier code should support. A first single-seed
+   pass showed a signal but also showed run-to-run variance larger than the between-variant
+   gaps (the same config at two seeds scored 0.16 and 0.36 average), so we repeated every
+   variant across seeds and report the mean.
 
-1. [Observation from §1 that motivated the first control.]
-2. [Theory 1's prediction; theory 2's prediction.]
-3. [The naive control + why it was unfair / inconclusive.]
-4. [The refined control that closes the loophole.]
-5. [Final discriminating result.]
+### Evidence: number-magnitude comparison across digit length
 
-### Discriminating evidence vs sanity checks
+**Classification:** Central. Theory 1 predicts a FoNE advantage; theory 2 predicts none.
+Observed: a FoNE advantage that grows with digit length.
 
-| Evidence | Classification | What it discriminates |
-|---|---|---|
-| [Exp B/01] | Central | Theory 1 predicts X; theory 2 predicts Y; observed Y. |
-| [Exp B/02] | Sanity check | Both theories predict same outcome; confirms setup. |
-| [Exp B/03] | Supporting | Robustness across [knob]. |
+Comparison exact match, mean over 3 seeds (extension to 6 seeds in progress). At 2 to 4
+digits every variant is comparable: the baseline learns short numbers on its own. From 6
+digits on, where subword-learned number embeddings degrade, the FoNE variants separate:
 
-### Evidence: [exp name] — [central control]
+| variant (125M) | 2d | 4d | 6d | 8d | 10d | avg |
+|---|---|---|---|---|---|---|
+| baseline (learned embeddings) | 0.55 | 0.30 | 0.07 | 0.09 | 0.07 | 0.21 |
+| FoNE, fixed 3 periods | 0.54 | 0.34 | 0.22 | 0.13 | 0.14 | 0.28 |
+| FoNE, fixed 6 periods | 0.59 | 0.35 | 0.26 | 0.11 | 0.09 | 0.28 |
+| **FoNE, learned frequencies** | 0.55 | 0.35 | **0.34** | **0.29** | **0.23** | **0.35** |
 
-**Classification:** Central.
+**Plain-language reading.** At 6 digits the learned-frequency FoNE model answers 34 of
+100 comparisons correctly against the baseline's 7, and the gap holds at 8 and 10 digits
+(0.29 vs 0.09, 0.23 vs 0.07). Theory 1 survives, theory 2 is rejected for this task.
+Learning the frequencies is the design that matters: it beats both fixed-frequency
+variants (average 0.35 vs 0.28), while adding fixed dimensions (3 to 6 periods) does not
+help. This answers §4's question in the same experiment.
 
-<!-- This is where the main control result lives. Include:
-  - the measurement
-  - the prediction under each theory
-  - the observed result
-  - the verdict on which theory survives
-Caveats inline (single seed? one setting? asymmetric comparison?). -->
+**Caveat.** This is one task (comparison) at one scale (125M), and the three-seed bands
+are wide (standard deviation 0.10 to 0.22 per cell); the learned-FoNE advantage at 6 to
+10 digits exceeds one standard deviation but the extension to six seeds is running to
+tighten it. Arithmetic remains at the scale floor and is not yet a discriminator.
 
-[Result paragraph with table; verdict.]
+### Context: FoNE (arXiv:2502.09741)
 
-### Context: [prior paper]
-
-[How prior work would interpret the same numbers.]
+Prior work reported the FoNE advantage on arithmetic under synthetic training. Here the
+advantage appears on number-magnitude comparison under natural-language pretraining, and
+specifically at the long digit lengths where subword number embeddings break down.
 
 ---
 

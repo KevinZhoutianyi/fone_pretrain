@@ -1,0 +1,22 @@
+# multi-seed compare (round 2): fone seed 202
+n_layer: 12
+n_head: 12
+d_model: 768
+d_ff: 2048
+seq_len: 2048
+lr: 6.0e-4
+batch_size: 16
+grad_accum: 2
+max_steps: 6000
+warmup_steps: 120
+log_every: 10
+eval_every: 250
+eval_iters: 20
+ckpt_every: 1000
+seed: 202
+embed_mode: fone
+n_periods: 3
+learnable_freq: false
+learnable_scale: true
+data_dir: /fsx/zhouty/data/fone_pretrain/datasets/mix3b_llama3
+run_dir: /fsx/zhouty/data/fone_pretrain/checkpoints/ms_fone_s202

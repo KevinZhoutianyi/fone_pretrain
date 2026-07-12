@@ -19,7 +19,7 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| (launching) | chunk_fone multi-seed compare | queued | §1/§2 | 4 variants (baseline / fone / fone_learned / fone_12d) x 3 seeds = 12 runs. The 9-run sweep showed compare has signal but single-seed variance (fone vs fone_seed2: avg 0.16 vs 0.36, same config) exceeds between-variant gaps. Multi-seed gives mean+band to actually rank designs. |
+| 401-423 (+evals) | chunk_fone multi-seed round 2 | running | §2 | 3 more seeds (101/202/303) x 4 variants = 12 train + 12 chained evals, taking each variant from 3 to 6 seeds to tighten the compare bands. Evals auto-run via afterok. |
 
 ---
 
@@ -36,6 +36,7 @@ paper.md, this row can be kept here as the historical record. -->
 | 309-318 (smoke) | chunk_fone 9-variant smoke | §1 | 9/9 PASS (20 steps): loss 11.9->7.78, ~36-58k tok/s; all variants converge to near-identical loss this early (numbers sparse); baseline retried once (309 hit a dirty node, 318 clean) |
 | 319-327 | chunk_fone 9-variant sweep | §1 | 9/9 trained to 6000 steps, all converged, final val_loss 2.86 (seed2 2.90) -- identical across variants, as expected (overall LM loss is text-dominated, not a discriminator). §1 pipeline-validity GOAL MET. |
 | 356-364 (eval) | chunk_fone number eval | §1 | add/sub ~0 at all digit lengths (125M+3B is too small for arithmetic generation; not a discriminator). compare (2-10 digits) has signal but single-seed variance dominates: fone and fone_seed2 (SAME config, diff seed) got avg 0.16 vs 0.36. Weak trend that fone_12d/fone_learned_fixedscale hold up better than baseline at 6-10 digits, but not trustworthy at 1 seed -> multi-seed follow-up. |
+| 366-390 (3-seed) | chunk_fone multi-seed compare | §2 | 4 variants x 3 seeds, compare exact-match mean+/-std. FoNE helps number-magnitude understanding, concentrated at LARGE digit lengths: fone_learned beats baseline 0.34 vs 0.07 (6d), 0.29 vs 0.09 (8d), 0.23 vs 0.07 (10d); tied at 2-4 digits. fone_learned (learned freq, avg 0.35) > fone / fone_12d (fixed, 0.28) > baseline (0.21). More fixed dims (6->12) did not help; learning the frequency did. add/sub still ~0. Bands still wide at 3 seeds -> extended to 6. |
 
 <!-- The single-`<NUM>`-per-number design (exp 01: whole number -> one <NUM> token +
 15-digit sidecar + output digit head) was replaced by chunk-based FoNE and its jobs

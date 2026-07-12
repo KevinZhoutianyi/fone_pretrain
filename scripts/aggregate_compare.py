@@ -42,16 +42,20 @@ def main():
 
     print("compare exact match, mean +/- std over seeds", SEEDS)
     print(f"\n{'variant':16s} " + " ".join(f"{n:>11d}d" for n in DIGITS) + f" {'avg':>7s}")
+    summary = {"digits": DIGITS, "seeds": SEEDS, "variants": {}}
     for v in VARIANTS:
-        cells = []
-        allm = []
+        cells, means, stds = [], [], []
         for n in DIGITS:
             xs = acc[v][n]
             m, sd = mean(xs), std(xs)
-            allm.append(m)
+            means.append(m); stds.append(sd)
             cells.append(f"{m:.2f}+/-{sd:.2f}")
-        avg = mean(allm)
-        print(f"{v:16s} " + " ".join(f"{c:>12s}" for c in cells) + f" {avg:7.2f}")
+        summary["variants"][v] = {"n_seeds": len(acc[v][DIGITS[0]]), "mean": means, "std": stds}
+        print(f"{v:16s} " + " ".join(f"{c:>12s}" for c in cells) + f" {mean(means):7.2f}")
+
+    out = "experiments/chunk_fone/results.json"
+    json.dump(summary, open(out, "w"), indent=2)
+    print(f"\nwrote {out}")
 
 
 if __name__ == "__main__":

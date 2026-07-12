@@ -66,14 +66,39 @@ def load(path: str) -> dict:
 
 
 # =============================================================================
-# Figure 1 — [headline discriminator] (placeholder)
+# Figure 1 — Does FoNE help number-magnitude comparison, and where?
+# Answer: the gain appears at long digit lengths, and learning the frequencies wins.
 # =============================================================================
-def fig1_main():
-    # d = load("experiments/01_main/results.json")
-    fig, ax = plt.subplots(figsize=(6.5, 3.5))
-    ax.text(0.5, 0.5, "[fig1_main placeholder]\nReplace with real data",
-            ha="center", va="center", transform=ax.transAxes)
-    out = OUT_DIR / "fig1_main.pdf"
+def fig1_compare():
+    d = load("experiments/chunk_fone/results.json")
+    digits = d["digits"]
+    style = {  # variant -> (label, color)
+        "baseline":     ("Baseline (learned emb.)", C_GRAY),
+        "fone":         ("FoNE, fixed 3 periods",   C_LBLUE),
+        "fone_12d":     ("FoNE, fixed 6 periods",   C_ORANGE),
+        "fone_learned": ("FoNE, learned freq.",     C_BLUE),
+    }
+    fig, ax = plt.subplots(figsize=(6.5, 3.8))
+    for v, (label, color) in style.items():
+        if v not in d["variants"]:
+            continue
+        s = d["variants"][v]
+        m = [100 * x for x in s["mean"]]
+        sd = [100 * x for x in s["std"]]
+        lo = [max(0, mi - si) for mi, si in zip(m, sd)]
+        hi = [mi + si for mi, si in zip(m, sd)]
+        ax.fill_between(digits, lo, hi, alpha=0.15, color=color, linewidth=0)
+        ax.plot(digits, m, marker="o", color=color, label=label,
+                linewidth=2 if v == "fone_learned" else 1.4)
+    ax.set_xlabel("number length (digits)")
+    ax.set_ylabel("comparison accuracy (%)")
+    ax.set_xticks(digits)
+    ax.set_ylim(0, 70)
+    n_seeds = d["variants"]["baseline"]["n_seeds"]
+    ax.legend(frameon=False, loc="upper right")
+    ax.set_title(f"Number-magnitude comparison (125M, mean of {n_seeds} seeds, band = std)",
+                 fontsize=10)
+    out = OUT_DIR / "fig1_compare.pdf"
     plt.savefig(out)
     plt.close(fig)
     print(f"  → {out.name}")
@@ -81,5 +106,5 @@ def fig1_main():
 
 if __name__ == "__main__":
     print("Generating figures:")
-    fig1_main()
+    fig1_compare()
     print(f"\nDone. Figures in {OUT_DIR}/")
