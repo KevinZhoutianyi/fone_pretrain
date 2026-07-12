@@ -19,7 +19,7 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| 319-327 | chunk_fone design sweep | running | §1 | 9-run design-variant wave, ~3.1B tokens each, one 8xH100 node per run. 3 headline (baseline / fone 6d / fone_learned 46d) + 6 ablations (12d fixed, 86d learned, learn-freq at 6d, scale-frozen x2, seed-2 band). All isolate one FoNE design knob; questions in experiments/chunk_fone/README.md. |
+| (launching) | chunk_fone multi-seed compare | queued | §1/§2 | 4 variants (baseline / fone / fone_learned / fone_12d) x 3 seeds = 12 runs. The 9-run sweep showed compare has signal but single-seed variance (fone vs fone_seed2: avg 0.16 vs 0.36, same config) exceeds between-variant gaps. Multi-seed gives mean+band to actually rank designs. |
 
 ---
 
@@ -34,6 +34,8 @@ paper.md, this row can be kept here as the historical record. -->
 | (no job) | chunk-FoNE core | §1 | 21/21 CPU tests + d_model=768 forward/backward green; tie-sharing (read==write share the code), zero-grad on frozen code dims, learnable periods + scale train, init loss aligned across variants (4.375/4.371/4.393) all verified |
 | data prep mix3b_llama3 | chunk_fone data | §1 | 3,391,139,029 Llama-3 tokens over 3,000,320 docs, 34 shards, uint32; number-chunk map 1110/128256; one shared dataset for all variants; DONE |
 | 309-318 (smoke) | chunk_fone 9-variant smoke | §1 | 9/9 PASS (20 steps): loss 11.9->7.78, ~36-58k tok/s; all variants converge to near-identical loss this early (numbers sparse); baseline retried once (309 hit a dirty node, 318 clean) |
+| 319-327 | chunk_fone 9-variant sweep | §1 | 9/9 trained to 6000 steps, all converged, final val_loss 2.86 (seed2 2.90) -- identical across variants, as expected (overall LM loss is text-dominated, not a discriminator). §1 pipeline-validity GOAL MET. |
+| 356-364 (eval) | chunk_fone number eval | §1 | add/sub ~0 at all digit lengths (125M+3B is too small for arithmetic generation; not a discriminator). compare (2-10 digits) has signal but single-seed variance dominates: fone and fone_seed2 (SAME config, diff seed) got avg 0.16 vs 0.36. Weak trend that fone_12d/fone_learned_fixedscale hold up better than baseline at 6-10 digits, but not trustworthy at 1 seed -> multi-seed follow-up. |
 
 <!-- The single-`<NUM>`-per-number design (exp 01: whole number -> one <NUM> token +
 15-digit sidecar + output digit head) was replaced by chunk-based FoNE and its jobs
