@@ -17,4 +17,3 @@ log_every: 10
 eval_every: 250
 eval_iters: 20
 ckpt_every: 1000
-n_learned_freq: 20    # fone_learned only: extra learnable periods beyond the 3 base

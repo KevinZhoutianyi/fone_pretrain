@@ -75,37 +75,37 @@ def _maps():
     return build_number_token_maps(FakeTokenizer(vocab))
 
 
-def test_fixed_periods_are_frozen_buffer():
+def test_fone_preset_is_frozen_3_period():
     is_num, value = _maps()
-    m = ChunkFreqCode(is_num, value, learned=False)
+    m = ChunkFreqCode(is_num, value, n_periods=3, learnable_freq=False)
     assert m.n_dims == 2 * N_FIXED_PERIODS               # 6
-    assert not isinstance(m.log_periods, torch.nn.Parameter)  # frozen
-    assert isinstance(m.scale, torch.nn.Parameter)       # scale IS learnable, even for fone
+    assert not isinstance(m.log_periods, torch.nn.Parameter)  # frozen periods
+    assert isinstance(m.scale, torch.nn.Parameter)       # scale IS learnable by default
     assert m.num_ids.tolist() == [1, 2, 3, 4]            # the 4 number tokens
     assert m().shape == (4, 6)                           # (n_num, F)
 
 
 def test_scale_matches_init_and_multiplies_code():
     is_num, value = _maps()
-    m = ChunkFreqCode(is_num, value, learned=False, scale_init=0.02)
+    m = ChunkFreqCode(is_num, value, n_periods=3, scale_init=0.02)
     assert abs(m.scale.item() - 0.02) < 1e-9
-    # forward output == scale * raw code
     raw = freq_code(m.num_values, m.log_periods)
-    assert torch.allclose(m(), 0.02 * raw, atol=1e-9)
-    # rows are ~0.02 in magnitude, not O(1)
-    assert m().abs().max().item() < 0.05
+    assert torch.allclose(m(), 0.02 * raw, atol=1e-9)    # forward == scale * raw code
+    assert m().abs().max().item() < 0.05                 # ~0.02 magnitude, not O(1)
 
 
-def test_scale_receives_gradient():
+def test_learnable_scale_toggle():
     is_num, value = _maps()
-    m = ChunkFreqCode(is_num, value, learned=False)
-    m().sum().backward()
-    assert m.scale.grad is not None and m.scale.grad.abs().item() > 0
+    frozen = ChunkFreqCode(is_num, value, n_periods=3, learnable_scale=False)
+    assert not isinstance(frozen.scale, torch.nn.Parameter)
+    learn = ChunkFreqCode(is_num, value, n_periods=3, learnable_scale=True)
+    learn().sum().backward()
+    assert learn.scale.grad is not None and learn.scale.grad.abs().item() > 0
 
 
-def test_learned_has_23_periods_all_trainable():
+def test_learned_preset_23_period_all_trainable():
     is_num, value = _maps()
-    m = ChunkFreqCode(is_num, value, learned=True, n_learned_freq=20)
+    m = ChunkFreqCode(is_num, value, n_periods=23, learnable_freq=True)
     assert m.n_dims == 2 * 23                             # 3 base + 20 extra
     assert isinstance(m.log_periods, torch.nn.Parameter)
     assert m.log_periods.numel() == 23
@@ -117,7 +117,15 @@ def test_learned_has_23_periods_all_trainable():
 
 def test_learned_periods_receive_gradient():
     is_num, value = _maps()
-    m = ChunkFreqCode(is_num, value, learned=True, n_learned_freq=20)
+    m = ChunkFreqCode(is_num, value, n_periods=23, learnable_freq=True)
     m().sum().backward()
     assert m.log_periods.grad is not None
     assert m.log_periods.grad.abs().sum() > 0
+
+
+def test_n_periods_below_3():
+    # a code with fewer than 3 dials keeps the first n base periods
+    is_num, value = _maps()
+    m = ChunkFreqCode(is_num, value, n_periods=2, learnable_freq=False)
+    assert m.n_dims == 4
+    assert torch.allclose(m.log_periods, torch.tensor([math.log(10.0), math.log(100.0)]), atol=1e-6)

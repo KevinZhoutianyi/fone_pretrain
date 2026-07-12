@@ -17,5 +17,8 @@ eval_every: 250
 eval_iters: 20
 ckpt_every: 1000
 embed_mode: fone
+n_periods: 3          # fixed periods 10/100/1000, F=6
+learnable_freq: false
+learnable_scale: true
 data_dir: /fsx/zhouty/data/fone_pretrain/datasets/mix3b_llama3
 run_dir: /fsx/zhouty/data/fone_pretrain/checkpoints/llama3_fone

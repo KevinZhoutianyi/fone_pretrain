@@ -24,10 +24,16 @@ class FakeTokenizer:
 VOCAB = ["<eos>", "the", "1", "2", "42", "123", "999", "100", "7"] + [f"w{i}" for i in range(8)]
 
 
+# the two headline presets as (n_periods, learnable_freq) knob sets
+PRESETS = {"baseline": {}, "fone": dict(n_periods=3, learnable_freq=False),
+           "fone_learned": dict(n_periods=23, learnable_freq=True)}
+
+
 def _model(mode, **kw):
     is_num, value = build_number_token_maps(FakeTokenizer(VOCAB))
+    knobs = {**PRESETS[mode], **kw}
     cfg = ModelConfig(vocab_size=len(VOCAB), n_layer=2, n_head=2, d_model=64, d_ff=128,
-                      max_seq_len=32, embed_mode=mode, **kw)
+                      max_seq_len=32, embed_mode=mode, **knobs)
     torch.manual_seed(0)
     return FonePretrainModel(cfg, is_num, value), is_num, value
 
@@ -85,7 +91,7 @@ def test_overwritten_dims_get_no_gradient():
 
 
 def test_learned_periods_train():
-    m, _, _ = _model("fone_learned", n_learned_freq=20)
+    m, _, _ = _model("fone_learned")
     idx = torch.randint(0, len(VOCAB), (2, 8))
     m(idx, targets=idx.clone())["loss"].backward()
     lp = m.num_code.log_periods

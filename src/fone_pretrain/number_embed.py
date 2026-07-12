@@ -70,29 +70,50 @@ def freq_code(values: torch.Tensor, log_periods: torch.Tensor) -> torch.Tensor:
     return torch.stack([torch.cos(ang), torch.sin(ang)], dim=-1).flatten(-2).to(torch.float32)
 
 
+def init_log_periods(n_periods: int) -> torch.Tensor:
+    """Starting periods for a code with n_periods dials. The first 3 are the base
+    10/100/1000 (which alone separate all of 0..999); any extra are log-uniform in
+    [10, 1000] to spread resolution. n_periods < 3 keeps the first n_periods base ones.
+    """
+    if n_periods <= N_FIXED_PERIODS:
+        return torch.tensor(FIXED_LOG_PERIODS[:n_periods])
+    extra = torch.linspace(math.log(10.0), math.log(1000.0), n_periods - N_FIXED_PERIODS)
+    return torch.cat([torch.tensor(FIXED_LOG_PERIODS), extra])
+
+
 class ChunkFreqCode(nn.Module):
     """Generates the (n_number_tokens, F) code block injected into the embedding table.
 
-    Holds the number-chunk token ids and their values. log_periods is a frozen buffer
-    for `fone` and a learnable Parameter for `fone_learned`. F = 2 * n_periods.
+    Config-driven so any point in the FoNE design space is a set of knobs:
+      n_periods       -- number of (cos, sin) dials; F = 2 * n_periods
+      learnable_freq  -- if True, the periods are trainable (nn.Parameter), else frozen
+      learnable_scale -- if True, the global code magnitude is trainable, else fixed
+      scale_init      -- initial code magnitude, matched to the 0.02 embedding init
+
+    Named presets used by the three headline variants:
+      fone         = n_periods 3,  learnable_freq False
+      fone_learned = n_periods 23, learnable_freq True
     """
 
     def __init__(self, is_number_token: torch.Tensor, token_value: torch.Tensor,
-                 learned: bool, n_learned_freq: int = 20, scale_init: float = 0.02):
+                 n_periods: int = 3, learnable_freq: bool = False,
+                 learnable_scale: bool = True, scale_init: float = 0.02):
         super().__init__()
         ids = torch.nonzero(is_number_token, as_tuple=False).squeeze(-1)  # (n_num,)
         self.register_buffer("num_ids", ids)
         self.register_buffer("num_values", token_value[ids])             # (n_num,)
 
-        if learned:
-            # 3 base periods (10/100/1000) + 20 extra, log-uniform in [10, 1000], ALL learnable
-            extra = torch.linspace(math.log(10.0), math.log(1000.0), n_learned_freq)
-            log_periods = torch.cat([torch.tensor(FIXED_LOG_PERIODS), extra])
+        log_periods = init_log_periods(n_periods)
+        if learnable_freq:
             self.log_periods = nn.Parameter(log_periods)
         else:
-            self.register_buffer("log_periods", torch.tensor(FIXED_LOG_PERIODS))
-        self.scale = nn.Parameter(torch.tensor(scale_init))   # global code magnitude, matched to emb init
-        self.n_dims = 2 * len(self.log_periods)   # F
+            self.register_buffer("log_periods", log_periods)
+        scale = torch.tensor(scale_init)
+        if learnable_scale:
+            self.scale = nn.Parameter(scale)
+        else:
+            self.register_buffer("scale", scale)
+        self.n_dims = 2 * n_periods   # F
 
     def forward(self) -> torch.Tensor:            # -> (n_num, F)
         return self.scale * freq_code(self.num_values, self.log_periods)

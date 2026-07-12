@@ -17,6 +17,8 @@ eval_every: 250
 eval_iters: 20
 ckpt_every: 1000
 embed_mode: fone_learned
-n_learned_freq: 20    # extra learnable Fourier periods on top of the 3 base (10/100/1000)
+n_periods: 23         # 3 base (10/100/1000) + 20 extra, F=46
+learnable_freq: true
+learnable_scale: true
 data_dir: /fsx/zhouty/data/fone_pretrain/datasets/mix3b_llama3
 run_dir: /fsx/zhouty/data/fone_pretrain/checkpoints/llama3_fone_learned

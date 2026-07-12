@@ -29,8 +29,13 @@ class ModelConfig:
     d_ff: int
     max_seq_len: int = 2048
     rope_theta: float = 10000.0
-    embed_mode: str = "baseline"   # baseline | fone | fone_learned
-    n_learned_freq: int = 20       # extra learnable periods for fone_learned
+    # embed_mode "baseline" injects nothing; anything else builds the FoNE code from
+    # the knobs below (fone / fone_learned are the two headline presets).
+    embed_mode: str = "baseline"
+    n_periods: int = 3             # (cos,sin) dials; F = 2 * n_periods
+    learnable_freq: bool = False   # trainable periods (fone_learned) vs frozen (fone)
+    learnable_scale: bool = True   # trainable global code magnitude
+    scale_init: float = 0.02       # initial code magnitude, matched to embedding init
 
 
 # === building blocks ===
@@ -113,8 +118,10 @@ class FonePretrainModel(nn.Module):
             assert is_number_token is not None and token_value is not None, \
                 "fone modes need is_number_token/token_value"
             self.num_code = ChunkFreqCode(is_number_token, token_value,
-                                          learned=(cfg.embed_mode == "fone_learned"),
-                                          n_learned_freq=cfg.n_learned_freq)
+                                          n_periods=cfg.n_periods,
+                                          learnable_freq=cfg.learnable_freq,
+                                          learnable_scale=cfg.learnable_scale,
+                                          scale_init=cfg.scale_init)
             assert self.num_code.n_dims <= cfg.d_model, \
                 f"FoNE code needs {self.num_code.n_dims} dims but d_model={cfg.d_model}"
 

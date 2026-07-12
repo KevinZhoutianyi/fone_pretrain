@@ -74,7 +74,11 @@ class CkptRunner:
         self.tok = AutoTokenizer.from_pretrained(man["tokenizer"])
         mcfg = ModelConfig(vocab_size=man["vocab_size"], n_layer=cfg["n_layer"],
                            n_head=cfg["n_head"], d_model=cfg["d_model"], d_ff=cfg["d_ff"],
-                           max_seq_len=cfg["seq_len"], embed_mode=cfg["embed_mode"])
+                           max_seq_len=cfg["seq_len"], embed_mode=cfg["embed_mode"],
+                           n_periods=cfg.get("n_periods", 3),
+                           learnable_freq=cfg.get("learnable_freq", False),
+                           learnable_scale=cfg.get("learnable_scale", True),
+                           scale_init=cfg.get("scale_init", 0.02))
         is_num = tok_value = None
         if cfg["embed_mode"] != "baseline":
             nm = np.load(Path(cfg["data_dir"]) / "number_map.npz")
