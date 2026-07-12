@@ -13,7 +13,7 @@ from collections import defaultdict
 
 E = "outputs/eval"
 VARIANTS = ["baseline", "fone", "fone_learned", "fone_12d"]
-SEEDS = [1337, 2024, 777]
+SEEDS = [1337, 2024, 777, 101, 202, 303]
 DIGITS = [2, 4, 6, 8, 10]
 
 

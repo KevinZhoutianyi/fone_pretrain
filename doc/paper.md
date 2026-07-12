@@ -46,11 +46,12 @@ number tasks.
 
 ### Thesis
 
-> A small model pretrained from scratch with chunk-based FoNE on a web plus math
-> corpus beats both its plain-embedding twin (same tokenizer and data, learned
-> number-token embeddings) and much larger frontier models on multi-digit arithmetic
-> and numeric-precision tasks, at equal pretrain token budget and a fraction of the
-> compute.
+> A small model pretrained from scratch with chunk-based FoNE (our method: a
+> learned-frequency Fourier code injected into the number-chunk token rows of the tied
+> embedding) on a web plus math corpus beats both its plain-embedding twin (same
+> tokenizer and data, learned number-token embeddings) and much larger frontier models on
+> multi-digit arithmetic and numeric-precision tasks, at equal pretrain token budget and a
+> fraction of the compute.
 
 ### Prior work and what makes the question hard
 
@@ -93,9 +94,9 @@ Rules for cells:
 | § | Question | What we did | What we showed | Therefore → |
 |---|---|---|---|---|
 | **§1 Pipeline validity** *(met)* | Does chunk-based FoNE-in-pretraining train stably at all: does the language-model loss converge with the Fourier code injected into number-chunk tokens? | 125M runs of all variants on ~3B tokens, same token stream; watched loss curves. | All variants train stably and reach the same held-out loss (2.86); the code does not destabilize training. | The pipeline is sound; any §2 gap is real, not an artifact. → §2 |
-| **§2 Equal-budget comparison** *(partial: comparison task, 125M)* | At the same pretrain token budget and identical data, does FoNE beat its plain-embedding twin on number tasks? | 125M runs, ~3B tokens, one shared tokenization; number eval suite (arithmetic + number-magnitude comparison) across digit length, multi-seed. | *(theory 1)* FoNE beats baseline on comparison, and the gap grows with digit length (6d: 0.34 vs 0.07). Arithmetic is ~0 for all variants (scale floor), so it does not yet discriminate. | The embedding, not data, causes the gain on comparison. Larger-scale and arithmetic remain open. → §3 |
+| **§2 Equal-budget comparison** *(partial: comparison task, 125M, underpowered)* | At the same pretrain token budget and identical data, does FoNE beat its plain-embedding twin on number tasks? | 125M runs, ~3B tokens, one shared tokenization; number eval suite (arithmetic + number-magnitude comparison) across digit length, six seeds. | FoNE holds a small, consistent edge on long-number comparison (baseline collapses to ~0.08 at 6+ digits, FoNE stays 0.07 to 0.19 higher), but six-seed bands are as large as the gaps, so variants are statistically tied. Arithmetic ~0 (scale floor). | 125M cannot rank the designs; the larger-scale run must. → §3 |
 | **§3 Frontier comparison** *(planned)* | Does the small FoNE model beat frontier company models on the same number tasks? | (planned) Run the identical eval suite on GPT / Claude / Gemini / open Llama; compare exact match by digit length. | *(predicted)* Frontier models degrade sharply past ~6 digits; the FoNE model stays near ceiling. | A 350M model wins on numeracy at a fraction of the compute: the headline. → §4 |
-| **§4 Fixed vs learned frequencies** *(planned)* | Do learned Fourier frequencies (TabFM style) help or hurt relative to fixed powers of ten? | (planned) Same §2 protocol; the fixed variant uses 3 periods (10, 100, 1000), the learned variant adds 20 more learnable periods. | *(predicted)* Parity or small gain for learned; falsifier: instability or a loss on precision tasks. | Guidance for how future models should adopt FoNE. |
+| **§4 Fixed vs learned frequencies** *(open: tied at 125M)* | Do learned Fourier frequencies (TabFM style) help or hurt relative to fixed powers of ten? | Six-seed 125M comparison; fixed variant 3 periods (10, 100, 1000), learned variant adds 20 learnable periods. | Learned and fixed are statistically tied at 125M (avg 0.26 vs 0.24, within one standard deviation). We adopt learned for generality; a real ranking needs the larger-scale run. | Guidance for how future models should adopt FoNE, pending scale. |
 
 ---
 
@@ -130,11 +131,12 @@ pretraining, which is the setting the prior work did not test.
 
 ---
 
-## §2 Equal-budget comparison (partial: number-magnitude task, 125M)
+## §2 Equal-budget comparison (partial: number-magnitude task, 125M, underpowered)
 
-**Claim.** At equal token budget and identical data, FoNE beats its plain-embedding twin
-on number-magnitude understanding, and the gain grows with digit length. Learning the
-Fourier frequencies beats fixing them.
+**Claim.** At equal token budget and identical data, all FoNE variants hold a small edge
+over the plain-embedding baseline on long-number comparison, but at 125M and 3B tokens the
+between-variant differences fall within the seed-to-seed noise. The 125M scale cannot rank
+the FoNE designs; that requires the larger-scale run.
 
 ### The discovery arc (read in order)
 
@@ -149,45 +151,46 @@ Fourier frequencies beats fixing them.
    arithmetic does not discriminate the theories at this scale (it is a scale floor, not a
    FoNE failure; verified by inspecting raw generations, which are complete wrong numbers,
    not truncations).
-4. Comparison does discriminate: it needs only to read the two values and pick the larger,
-   which is exactly what the input-side Fourier code should support. A first single-seed
-   pass showed a signal but also showed run-to-run variance larger than the between-variant
-   gaps (the same config at two seeds scored 0.16 and 0.36 average), so we repeated every
-   variant across seeds and report the mean.
+4. Comparison shows a signal, but seed variance is large. A three-seed pass suggested a
+   strong, digit-length-growing FoNE advantage; extending to six seeds shrank it
+   substantially and collapsed the between-variant ordering. We report the six-seed mean
+   and read it conservatively.
 
 ### Evidence: number-magnitude comparison across digit length
 
-**Classification:** Central. Theory 1 predicts a FoNE advantage; theory 2 predicts none.
-Observed: a FoNE advantage that grows with digit length.
+**Classification:** Supporting, not yet discriminating. The direction is consistent with
+theory 1, but the six-seed bands are as large as the between-variant gaps.
 
-Comparison exact match, mean over 3 seeds (extension to 6 seeds in progress). At 2 to 4
-digits every variant is comparable: the baseline learns short numbers on its own. From 6
-digits on, where subword-learned number embeddings degrade, the FoNE variants separate:
+Comparison exact match, mean over six seeds (standard deviation 0.04 to 0.21 per cell):
 
 | variant (125M) | 2d | 4d | 6d | 8d | 10d | avg |
 |---|---|---|---|---|---|---|
-| baseline (learned embeddings) | 0.55 | 0.30 | 0.07 | 0.09 | 0.07 | 0.21 |
-| FoNE, fixed 3 periods | 0.54 | 0.34 | 0.22 | 0.13 | 0.14 | 0.28 |
-| FoNE, fixed 6 periods | 0.59 | 0.35 | 0.26 | 0.11 | 0.09 | 0.28 |
-| **FoNE, learned frequencies** | 0.55 | 0.35 | **0.34** | **0.29** | **0.23** | **0.35** |
+| baseline (learned embeddings) | 0.53 | 0.29 | 0.09 | 0.08 | 0.08 | 0.22 |
+| FoNE, fixed 3 periods | 0.49 | 0.33 | 0.16 | 0.12 | 0.12 | 0.24 |
+| FoNE, fixed 6 periods | 0.54 | 0.32 | 0.19 | 0.09 | 0.07 | 0.24 |
+| FoNE, learned frequencies (our method) | 0.55 | 0.28 | 0.17 | 0.15 | 0.12 | 0.26 |
 
-**Plain-language reading.** At 6 digits the learned-frequency FoNE model answers 34 of
-100 comparisons correctly against the baseline's 7, and the gap holds at 8 and 10 digits
-(0.29 vs 0.09, 0.23 vs 0.07). Theory 1 survives, theory 2 is rejected for this task.
-Learning the frequencies is the design that matters: it beats both fixed-frequency
-variants (average 0.35 vs 0.28), while adding fixed dimensions (3 to 6 periods) does not
-help. This answers §4's question in the same experiment.
+**Plain-language reading.** All FoNE variants sit slightly above baseline on average
+(0.24 to 0.26 versus 0.22), and at 6 digits and beyond, where subword-learned number
+embeddings collapse to near chance (baseline 0.07 to 0.09), the FoNE variants stay a few
+points higher (0.07 to 0.19). This is a consistent direction, not a resolved gap: every
+between-variant difference is within one standard deviation. We adopt learned frequencies
+as the method for its generality (it can represent any period, subsuming the fixed
+variants), not because it wins here; at 125M it is statistically tied with the fixed
+variants.
 
-**Caveat.** This is one task (comparison) at one scale (125M), and the three-seed bands
-are wide (standard deviation 0.10 to 0.22 per cell); the learned-FoNE advantage at 6 to
-10 digits exceeds one standard deviation but the extension to six seeds is running to
-tighten it. Arithmetic remains at the scale floor and is not yet a discriminator.
+**Caveat (this reversed a stronger earlier reading).** A three-seed pass had shown
+learned-FoNE at 0.34 versus baseline 0.07 at 6 digits and a clean learned-beats-fixed
+ordering. Six seeds cut that to 0.17 versus 0.09 and erased the ordering: the three-seed
+result was a favorable draw. Arithmetic remains at the scale floor. Ranking the designs
+needs the larger-scale run (below).
 
 ### Context: FoNE (arXiv:2502.09741)
 
-Prior work reported the FoNE advantage on arithmetic under synthetic training. Here the
-advantage appears on number-magnitude comparison under natural-language pretraining, and
-specifically at the long digit lengths where subword number embeddings break down.
+Prior work reported the FoNE advantage on arithmetic under synthetic training. Under
+natural-language pretraining at 125M, we see only a weak, non-significant edge on
+number-magnitude comparison, concentrated at the long digit lengths where subword number
+embeddings break down. Whether this becomes a clear advantage at larger scale is open.
 
 ---
 
