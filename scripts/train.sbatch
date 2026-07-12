@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: sbatch scripts/train.sbatch configs/125m_fone.yaml [--smoke]
+# Usage: sbatch scripts/train.sbatch configs/llama3_fone.yaml [--smoke]
 # One 8xH100 node per run; checkpoints auto-sync to S3 every 10 min and on exit.
 #SBATCH --job-name=fone
 #SBATCH --partition=dev

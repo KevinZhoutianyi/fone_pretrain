@@ -1,13 +1,14 @@
 """Memmap dataset over shards produced by scripts/prepare_data.py.
 
 Each batch element is a random window of `seq_len + 1` tokens from one shard
-(input = [:-1], target = [1:]). In fone mode the sidecar supplies digit slots for
-<NUM> positions: `num_slots[t]` are the digits of the <NUM> *at* position t (input
-side), `target_slots[t]` are the digits of the <NUM> at position t+1 (target side).
-The last `val_tokens` of the token stream are reserved as the held-out val split.
-This can span more than one shard: `prepare_data.py` flushes shards at exactly
-SHARD_TOKENS, so the final shard is whatever is left over and can be much smaller
-than val_tokens (e.g. a 504K-token leftover shard against a 20M-token val split).
+(input = [:-1], target = [1:]). Numbers are ordinary <=3-digit chunk tokens in the
+stream, so there is no sidecar: the model injects the fixed Fourier code from the
+token id itself. The last `val_tokens` of the token stream are reserved as the
+held-out val split. This can span more than one shard: `prepare_data.py` flushes
+shards at exactly SHARD_TOKENS, so the final shard is whatever is left over and can
+be much smaller than val_tokens.
+
+Token ids are stored as uint32 (Llama-3's 128k vocab overflows uint16).
 """
 
 import json
@@ -16,20 +17,15 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .number_embed import N_SLOTS
-
-NUM_DTYPE = np.dtype([("pos", np.int64), ("slots", np.uint8, 15)])
+TOKEN_DTYPE = np.uint32
 
 
 class PackedDataset:
     def __init__(self, data_dir: str, seq_len: int, split: str = "train"):
         self.dir, self.seq_len = Path(data_dir), seq_len
         self.manifest = json.loads((self.dir / "manifest.json").read_text())
-        self.mode = self.manifest["mode"]
-        self.tokens = [np.memmap(p, dtype=np.uint16, mode="r")
+        self.tokens = [np.memmap(p, dtype=TOKEN_DTYPE, mode="r")
                        for p in sorted(self.dir.glob("tokens_*.bin"))]
-        if self.mode == "fone":
-            self.numbers = [np.load(p) for p in sorted(self.dir.glob("numbers_*.npy"))]
 
         # === train/val split: val = tail of the global token stream, possibly
         # spanning several shards; val_shards[i] gives that shard's val region [lo, hi).
@@ -61,12 +57,10 @@ class PackedDataset:
         self.split = split
 
     def sample_batch(self, batch_size: int, rng: np.random.Generator, device) -> dict:
-        """Random windows; returns tensors ready for model.loss()."""
+        """Random windows; returns tensors ready for model.forward()."""
         L = self.seq_len
         idx = np.empty((batch_size, L), dtype=np.int64)
         tgt = np.empty((batch_size, L), dtype=np.int64)
-        slots_in = np.zeros((batch_size, L, N_SLOTS), dtype=np.uint8)
-        slots_tg = np.zeros((batch_size, L, N_SLOTS), dtype=np.uint8)
 
         for b in range(batch_size):
             # pick a shard, then a window inside the allowed region for this split
@@ -83,17 +77,5 @@ class PackedDataset:
             window = self.tokens[s][start:start + L + 1].astype(np.int64)
             idx[b], tgt[b] = window[:-1], window[1:]
 
-            if self.mode == "fone":
-                nums = self.numbers[s]
-                l = np.searchsorted(nums["pos"], start)
-                r = np.searchsorted(nums["pos"], start + L + 1)
-                for p, sl in zip(nums["pos"][l:r], nums["slots"][l:r]):
-                    off = int(p - start)
-                    if off < L:
-                        slots_in[b, off] = sl          # number is the input at off
-                    if 0 < off <= L:
-                        slots_tg[b, off - 1] = sl      # number is the target after off-1
-
-        to = lambda a, dt: torch.from_numpy(a).to(device=device, dtype=dt, non_blocking=True)
-        return {"idx": to(idx, torch.long), "targets": to(tgt, torch.long),
-                "num_slots": to(slots_in, torch.long), "target_slots": to(slots_tg, torch.long)}
+        to = lambda a: torch.from_numpy(a).to(device=device, dtype=torch.long, non_blocking=True)
+        return {"idx": to(idx), "targets": to(tgt)}

@@ -1,10 +1,10 @@
-"""Correctness gate for the FoNE core before any GPU spend (tracking.md step 1).
+"""Correctness gate for the chunk-based FoNE core before any GPU spend.
 
-Covers: extraction regex edge cases, digit slot packing, exact Fourier phases,
-decode round-trip, and the learned-freq init matching the fixed variant.
+Covers: number-chunk token map (which ids are 1-3 digit chunks and their values),
+the 6-dim fixed code being injective over 0..999, and the learned-freq variant
+starting exactly equal to the fixed variant.
 """
 
-import math
 import sys
 from pathlib import Path
 
@@ -12,113 +12,86 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from fone_pretrain.number_embed import (  # noqa: E402
-    FONE_DIM, FoneDigitHead, FoneInputEmbed, LearnedFreqInputEmbed,
-    digits_to_slots, extract_numbers, fone_features, slot_phases, slots_to_string,
+    FIXED_DIMS, ChunkFoneEmbed, ChunkFoneLearnedEmbed,
+    build_number_token_maps, chunk_fixed_code,
 )
 
-P = "<NUM>"
+
+class FakeTokenizer:
+    """Minimal stand-in so the map test needs no HF download. decode([id]) returns
+    the vocab string; some entries carry a leading space like real BPE tokens."""
+
+    def __init__(self, vocab: list[str]):
+        self.vocab = vocab
+
+    def __len__(self):
+        return len(self.vocab)
+
+    def decode(self, ids):
+        return self.vocab[ids[0]]
 
 
-# === extraction ===
-def test_extract_basic():
-    text, nums = extract_numbers("pi is 3.14, year 2024", P)
-    assert text == f"pi is {P}, year {P}"
-    assert nums == [("3", "14"), ("2024", "")]
-
-def test_extract_out_of_range_left_alone():
-    # 11 integer digits: too long, stays as text
-    text, nums = extract_numbers("id 12345678901 ok", P)
-    assert text == "id 12345678901 ok" and nums == []
-    # 6 fractional digits: too long
-    text, nums = extract_numbers("x = 0.123456", P)
-    assert text == "x = 0.123456" and nums == []
-
-def test_extract_boundaries():
-    # version strings "1.2.3": "1.2" would leave ".3"; the lookahead rejects digits
-    # adjacent to a second dot so the whole thing stays as text
-    text, nums = extract_numbers("v1.2.3 and 10.5.1", P)
-    assert nums == []
-    # money and percents still match the numeric core
-    text, nums = extract_numbers("$1234 is 56.7%", P)
-    assert text == f"${P} is {P}%" and nums == [("1234", ""), ("56", "7")]
-
-def test_extract_sign_stays_in_text():
-    text, nums = extract_numbers("delta is -42.5", P)
-    assert text == f"delta is -{P}" and nums == [("42", "5")]
+# === number-chunk token map ===
+def test_token_map_flags_digit_chunks():
+    vocab = ["hello", "123", " 42", "9", "1000", "12.5", "ab3", " 007", "", "999"]
+    is_num, value = build_number_token_maps(FakeTokenizer(vocab))
+    # pure 1-3 digit chunks, with or without a leading space
+    assert is_num.tolist() == [False, True, True, True, False, False, False, True, False, True]
+    # values are face value; " 42" -> 42, " 007" -> 7
+    assert value[1].item() == 123
+    assert value[2].item() == 42
+    assert value[3].item() == 9
+    assert value[7].item() == 7
+    assert value[9].item() == 999
+    # non-number tokens carry value 0
+    assert value[0].item() == 0 and value[4].item() == 0
 
 
-# === digit slots ===
-def test_slots_roundtrip():
-    slots = digits_to_slots("2024", "5")
-    assert slots == [4, 2, 0, 2] + [0] * 6 + [5] + [0] * 4
-    assert slots_to_string(slots) == "2024.5"
-    assert slots_to_string(digits_to_slots("0", "")) == "0"
-    assert slots_to_string(digits_to_slots("007", "")) == "7"      # canonical
-    assert slots_to_string(digits_to_slots("3", "140")) == "3.14"  # canonical
+def test_token_map_rejects_4_digit_and_nondigit():
+    vocab = ["1000", "12345", "3.14", "-5", "0"]
+    is_num, value = build_number_token_maps(FakeTokenizer(vocab))
+    assert is_num.tolist() == [False, False, False, False, True]  # only "0"
+    assert value[4].item() == 0
 
 
-# === Fourier phases: compare against direct float computation on safe values ===
-def test_phases_match_direct():
-    slots = torch.tensor([digits_to_slots("123", "45")])  # x = 123.45
-    ph = slot_phases(slots)[0]
-    x = 123.45
-    for i in range(10):   # integer periods 10^1..10^10
-        expect = (x / 10 ** (i + 1)) % 1.0
-        assert abs(ph[i].item() - expect) < 1e-9, (i, ph[i].item(), expect)
-    for j in range(5):    # fractional periods 10^-1..10^-5
-        expect = (x * 10 ** (j + 1)) % 1.0
-        # direct float loses bits here; digit-based is the exact one
-        assert abs(ph[10 + j].item() - round(expect, 6) % 1.0) < 1e-6
-
-def test_phases_exact_for_10_digits():
-    # 9999999999: float32 could not even represent this; check ones digit survives
-    slots = torch.tensor([digits_to_slots("9999999999", "")])
-    ph = slot_phases(slots)[0]
-    assert abs(ph[0].item() - 0.9) < 1e-12  # frac(x/10) = 0.9…9 -> ones digit 9
-
-def test_features_shape():
-    slots = torch.tensor([digits_to_slots("42", "")] * 3)
-    assert fone_features(slots).shape == (3, FONE_DIM)
+# === fixed 6-dim code ===
+def test_code_shape():
+    values = torch.arange(0, 1000)
+    assert chunk_fixed_code(values).shape == (1000, FIXED_DIMS)
 
 
-# === decode head: prototype path must be self-consistent ===
-def test_digit_head_decodes_planted_signal():
-    # decode() argmaxes against prototypes phi(d) = (cos 2πd/10, sin 2πd/10); a
-    # trained model emits exactly those phases (the CE loss optimum). Plant them
-    # directly per slot and require exact recovery. NOTE: raw input features
-    # FoNE(x) would NOT decode this way -- their phases carry lower-digit
-    # contributions (frac(x/100) for ...09.12 is 0.0912, nearer prototype 1 than
-    # 0); decode is only defined on model outputs. See paper's loss design.
-    torch.manual_seed(0)
-    head = FoneDigitHead(d_model=64)
-    slots = torch.tensor([digits_to_slots("8675309", "12")])
-    ang = 2 * math.pi * slots[0].float() / 10.0
-    planted = torch.stack([torch.cos(ang), torch.sin(ang)], dim=-1).flatten()  # (30,)
-    head.proj.weight.data.zero_()
-    head.proj.weight.data[:, :FONE_DIM] = torch.eye(FONE_DIM)
-    h = torch.zeros(1, 64)
-    h[:, :FONE_DIM] = planted
-    assert torch.equal(head.decode(h), slots)
-
-def test_digit_head_loss_decreases():
-    torch.manual_seed(0)
-    head = FoneDigitHead(d_model=32)
-    slots = torch.randint(0, 10, (64, 15))
-    h = torch.randn(64, 32, requires_grad=True)
-    opt = torch.optim.Adam(list(head.parameters()) + [h], lr=1e-2)
-    first = None
-    for _ in range(200):
-        loss, acc = head.loss(h, slots)
-        first = first or loss.item()
-        opt.zero_grad(); loss.backward(); opt.step()
-    assert loss.item() < first * 0.1, "digit CE should be trivially learnable"
+def test_code_injective_over_0_999():
+    # the 6-dim code must separate all 1000 chunk values (else two numbers collide)
+    codes = chunk_fixed_code(torch.arange(0, 1000))
+    # pairwise nearest-neighbor distance > 0: round to 6 decimals and require 1000 uniques
+    keys = {tuple(torch.round(c, decimals=6).tolist()) for c in codes}
+    assert len(keys) == 1000
 
 
-# === learned-freq variant: init must match fixed FoNE features ===
+def test_code_matches_manual_phase():
+    # value 123: frac(123/10)=0.3, frac(123/100)=0.23, frac(123/1000)=0.123
+    import math
+    code = chunk_fixed_code(torch.tensor([123]))[0]
+    for k, p in enumerate([0.3, 0.23, 0.123]):
+        assert abs(code[2 * k].item() - math.cos(2 * math.pi * p)) < 1e-5
+        assert abs(code[2 * k + 1].item() - math.sin(2 * math.pi * p)) < 1e-5
+
+
+# === learned-freq variant: init must equal fixed ===
 def test_learned_init_matches_fixed():
-    torch.manual_seed(0)
-    fixed, learned = FoneInputEmbed(48), LearnedFreqInputEmbed(48)
-    learned.proj.weight.data.copy_(fixed.proj.weight.data)
-    slots = torch.tensor([digits_to_slots("31415", "9")])
-    a, b = fixed(slots), learned(slots)
-    assert torch.allclose(a, b, atol=1e-5), (a - b).abs().max()
+    vocab = ["x", "123", " 42", "9", "999"]
+    is_num, value = build_number_token_maps(FakeTokenizer(vocab))
+    fixed, learned = ChunkFoneEmbed(is_num, value), ChunkFoneLearnedEmbed(is_num, value)
+    idx = torch.tensor([[0, 1, 2, 3, 4]])
+    fc, fm = fixed(idx)
+    lc, lm = learned(idx)
+    assert torch.allclose(fc, lc, atol=1e-5), (fc - lc).abs().max()
+    assert torch.equal(fm, lm)
+
+
+def test_learned_freq_mult_shape():
+    is_num = torch.tensor([False, True])
+    value = torch.tensor([0, 5])
+    learned = ChunkFoneLearnedEmbed(is_num, value)
+    assert learned.freq_mult.shape == (FIXED_DIMS // 2,)
+    assert torch.allclose(learned.freq_mult, torch.ones(FIXED_DIMS // 2))

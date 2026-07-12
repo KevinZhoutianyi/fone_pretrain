@@ -16,10 +16,10 @@ from fone_pretrain.data import PackedDataset  # noqa: E402
 
 
 def make_dataset(tmp_path, shard_sizes, val_tokens, seq_len=8):
-    """Writes `len(shard_sizes)` baseline-mode shards of the given token counts."""
+    """Writes `len(shard_sizes)` uint32 token shards of the given token counts."""
     for i, size in enumerate(shard_sizes):
-        np.arange(size, dtype=np.uint16).tofile(tmp_path / f"tokens_{i:04d}.bin")
-    manifest = {"mode": "baseline", "vocab_size": 100, "num_token_id": -1,
+        np.arange(size, dtype=np.uint32).tofile(tmp_path / f"tokens_{i:04d}.bin")
+    manifest = {"vocab_size": 128256,
                "total_tokens": sum(shard_sizes), "docs": 1, "shard_tokens": max(shard_sizes),
                "n_shards": len(shard_sizes), "val_tokens": val_tokens}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
@@ -71,3 +71,19 @@ def test_tiny_trailing_shard_excluded_from_both_splits(tmp_path):
     rng = np.random.default_rng(0)
     for _ in range(20):
         ds_val.sample_batch(2, rng, "cpu")   # must not raise
+
+
+def test_uint32_ids_survive_roundtrip(tmp_path):
+    # Llama-3 ids reach 128k, past uint16's 65535 ceiling; the shard dtype must be
+    # uint32 or high ids wrap. Plant an id above 65535 and require it back exactly.
+    hi = 128255
+    tokens = np.arange(hi - 99, hi + 1, dtype=np.uint32)  # 100 tokens up to 128255
+    tokens.tofile(tmp_path / "tokens_0000.bin")
+    manifest = {"vocab_size": 128256, "total_tokens": len(tokens), "docs": 1,
+                "shard_tokens": len(tokens), "n_shards": 1, "val_tokens": 20}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    ds = PackedDataset(str(tmp_path), seq_len=8, split="train")
+    rng = np.random.default_rng(0)
+    batch = ds.sample_batch(4, rng, "cpu")
+    assert int(batch["idx"].max()) <= hi
+    assert int(batch["idx"].max()) > 65535   # the high id is present and not wrapped

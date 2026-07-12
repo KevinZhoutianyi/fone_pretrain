@@ -17,13 +17,6 @@ import sys
 import time
 from pathlib import Path
 
-
-def _nan_to_none(x):
-    """json.dumps emits nonstandard `NaN` for float('nan'); use null instead so
-    metrics.jsonl stays valid JSON for downstream plotting (baseline's digit_acc
-    is NaN by design -- it has no digit head, see model.py)."""
-    return None if isinstance(x, float) and math.isnan(x) else x
-
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -67,10 +60,16 @@ def main():
     mcfg = ModelConfig(
         vocab_size=man["vocab_size"], n_layer=cfg["n_layer"], n_head=cfg["n_head"],
         d_model=cfg["d_model"], d_ff=cfg["d_ff"], max_seq_len=cfg["seq_len"],
-        embed_mode=cfg["embed_mode"], num_token_id=man["num_token_id"],
-        num_loss_weight=cfg.get("num_loss_weight", 1.0),
+        embed_mode=cfg["embed_mode"],
     )
-    raw = FonePretrainModel(mcfg).to(device)   # uncompiled ref: clean state_dict keys
+    # number-chunk maps (is_number_token, token_value) are precomputed by prepare_data.py
+    # and saved next to the shards; baseline does not need them.
+    is_num = tok_value = None
+    if cfg["embed_mode"] != "baseline":
+        nm = np.load(Path(cfg["data_dir"]) / "number_map.npz")
+        is_num = torch.from_numpy(nm["is_number_token"])
+        tok_value = torch.from_numpy(nm["token_value"])
+    raw = FonePretrainModel(mcfg, is_num, tok_value).to(device)   # uncompiled ref: clean state_dict keys
     model = torch.compile(raw)                 # params are shared, not copied
     if ddp:
         model = torch.nn.parallel.DistributedDataParallel(model)
@@ -115,7 +114,7 @@ def main():
     @torch.no_grad()
     def evaluate():
         model.eval()
-        agg = {"lm_loss": 0.0, "num_loss": 0.0, "digit_acc": 0.0}
+        agg = {"lm_loss": 0.0}
         for _ in range(cfg["eval_iters"]):
             batch = val_ds.sample_batch(cfg["batch_size"], rng, device)
             with torch.autocast("cuda", torch.bfloat16):
@@ -146,7 +145,6 @@ def main():
         if master and (step % cfg["log_every"] == 0 or step == cfg["max_steps"] - 1):
             dt = time.time() - t0
             rec = {"step": step, "loss": out["loss"].item(), "lm_loss": out["lm_loss"].item(),
-                   "num_loss": out["num_loss"].item(), "digit_acc": _nan_to_none(out["digit_acc"].item()),
                    "lr": lr_at(step), "tok_per_s": int(tokens_seen / dt)}
             print(json.dumps(rec), flush=True)
             metrics_f.write(json.dumps(rec) + "\n")
@@ -154,7 +152,6 @@ def main():
 
         if master and step > 0 and step % cfg["eval_every"] == 0:
             ev = evaluate()
-            ev["digit_acc"] = _nan_to_none(ev["digit_acc"])
             print(json.dumps({"step": step, "val": ev}), flush=True)
             metrics_f.write(json.dumps({"step": step, "val": ev}) + "\n")
             metrics_f.flush()

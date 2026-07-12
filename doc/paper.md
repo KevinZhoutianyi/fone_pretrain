@@ -25,35 +25,44 @@ HTML comments explain the *intent* of each block.
 of study, say what people thought was happening, and say what your
 project is investigating. Link any technical terms to Appendix A. -->
 
-Language models read and write numbers as text fragments: a tokenizer splits
-2024.5 into pieces and the model must reassemble the value from the pieces.
-FoNE (Fourier Number Embedding) instead gives the model each number as one
-token whose embedding encodes the exact value through Fourier features, one
-cosine and sine pair per digit. Prior work showed FoNE reaches near-perfect
-arithmetic when trained on synthetic arithmetic alone; whether it helps when
-mixed into ordinary language pretraining is open. This project pretrains the
-same model three ways on the same web plus math corpus (standard tokenizer,
-FoNE with fixed frequencies, FoNE with learned frequencies) and asks whether
-the FoNE runs win on number tasks.
+Language models read and write numbers as text fragments. Modern tokenizers
+(Llama-3, GPT-4) already split a number into chunks of up to three digits: 1234567
+becomes the tokens 123, 456, 7. Each chunk is one ordinary vocabulary token whose
+embedding the model learns from scratch, so nothing tells the model that the token
+123 stands for the value one hundred twenty-three. FoNE (Fourier Number Embedding)
+supplies that structure: it writes a fixed Fourier code of the chunk's value into the
+first few dimensions of that token's embedding, one cosine and sine pair per digit
+place, and leaves the remaining dimensions free for the model to learn. Prior work
+showed FoNE reaches near-perfect arithmetic when trained on synthetic arithmetic
+alone; whether it helps when mixed into ordinary language pretraining is open. This
+project pretrains the same model three ways on the same web plus math corpus (plain
+learned embeddings, FoNE with fixed frequencies, FoNE with learned frequencies) and
+asks whether the FoNE runs win on number tasks.
 
 → Key terms: Appendix A.
 → How we measure success: Appendix B.
 
 ### Thesis
 
-> A small model pretrained from scratch with FoNE on a web plus math corpus
-> beats both its standard-tokenizer twin and much larger frontier models on
-> multi-digit arithmetic and numeric-precision tasks, at equal pretrain token
-> budget and a fraction of the compute.
+> A small model pretrained from scratch with chunk-based FoNE on a web plus math
+> corpus beats both its plain-embedding twin (same tokenizer and data, learned
+> number-token embeddings) and much larger frontier models on multi-digit arithmetic
+> and numeric-precision tasks, at equal pretrain token budget and a fraction of the
+> compute.
 
 ### Prior work and what makes the question hard
 
 The FoNE paper (arXiv:2502.09741) trained small models on synthetic arithmetic
 only and reported near-perfect accuracy with far less data than digit-wise or
-subword baselines. Google's TabFM used a learned-frequency variant inside a
-tabular foundation model. Neither tested FoNE inside natural-language
-pretraining, where numbers are sparse, noisy, and mixed with text, so the
-gains could vanish once the embedding must share capacity with language.
+subword baselines. It encoded each whole number in one embedding. We instead attach
+the Fourier code to the tokenizer's existing three-digit chunk tokens, so the method
+drops into a standard pretraining stack without a custom number token or an
+output-side decode head. The code occupies only the first six dimensions of a chunk
+token's embedding; the rest stay learned, so the number signal shares capacity with
+language rather than replacing it. Google's TabFM used a learned-frequency variant
+inside a tabular foundation model. Neither tested FoNE inside natural-language
+pretraining, where numbers are sparse, noisy, and mixed with text, so the gains could
+vanish once the embedding must share capacity with language.
 
 | Theory | What it predicts in our pretrain comparison | Discriminating test |
 |---|---|---|
@@ -81,8 +90,8 @@ Rules for cells:
 
 | § | Question | What we did | What we showed | Therefore → |
 |---|---|---|---|---|
-| **§1 Pipeline validity** *(planned)* | Does FoNE-in-pretraining train stably at all: does the mixed loss converge and does per-digit accuracy rise? | (planned) 125M-parameter runs of all three variants on ~3B tokens; watch loss curves and digit accuracy. | *(predicted)* All three train stably; FoNE digit accuracy climbs well above chance early. | The pipeline is sound; any §2 gap is real, not an artifact. → §2 |
-| **§2 Equal-budget comparison** *(planned)* | At the same pretrain token budget, does FoNE beat its standard-tokenizer twin on number tasks? | (planned) 350M-parameter runs, 10B+ tokens, identical data and schedule; number eval suite on all three. | *(predicted, theory 1)* FoNE variants win by a wide margin on arithmetic exact match; falsifier: gap within noise means theory 2. | The embedding, not data or scale, causes the gain. → §3 |
+| **§1 Pipeline validity** *(planned)* | Does chunk-based FoNE-in-pretraining train stably at all: does the language-model loss converge with the fixed Fourier code injected into number-chunk tokens? | (planned) 125M-parameter runs of all three variants on ~3B tokens, same token stream; watch loss curves. | *(predicted)* All three train stably; the injected code does not destabilize training relative to the plain-embedding baseline. | The pipeline is sound; any §2 gap is real, not an artifact. → §2 |
+| **§2 Equal-budget comparison** *(planned)* | At the same pretrain token budget, does FoNE beat its plain-embedding twin (same tokenizer and data, learned number-token embeddings) on number tasks? | (planned) 350M-parameter runs, 10B+ tokens, identical data and schedule; number eval suite on all three. | *(predicted, theory 1)* FoNE variants win by a wide margin on arithmetic exact match; falsifier: gap within noise means theory 2. | The embedding, not data or scale, causes the gain. → §3 |
 | **§3 Frontier comparison** *(planned)* | Does the small FoNE model beat frontier company models on the same number tasks? | (planned) Run the identical eval suite on GPT / Claude / Gemini / open Llama; compare exact match by digit length. | *(predicted)* Frontier models degrade sharply past ~6 digits; the FoNE model stays near ceiling. | A 350M model wins on numeracy at a fraction of the compute: the headline. → §4 |
 | **§4 Fixed vs learned frequencies** *(planned)* | Do learned Fourier frequencies (TabFM style) help or hurt relative to fixed powers of ten? | (planned) Same §2 protocol; the two FoNE variants differ only in the input featurizer. | *(predicted)* Parity or small gain for learned; falsifier: instability or a loss on precision tasks. | Guidance for how future models should adopt FoNE. |
 

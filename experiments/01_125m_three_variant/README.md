@@ -1,5 +1,13 @@
 # 01 — 125M three-variant pipeline validation
 
+> **Superseded by experiment 02.** This experiment used the single-`<NUM>`-per-number
+> design (whole number collapsed to one token, 15-digit sidecar, output digit head).
+> The project has since switched to chunk-based FoNE (numbers stay as the tokenizer's
+> native <=3-digit chunk tokens; a fixed Fourier code overwrites the first 6 embedding
+> dimensions). See `experiments/02_llama3_chunk_fone/`. This README is kept as the
+> historical record of the single-`<NUM>` pipeline.
+
+
 **Goal (paper.md §1).** Show the FoNE pretraining pipeline trains stably: mixed
 LM + per-digit loss converges for all three variants and digit accuracy rises
 well above chance (0.1).

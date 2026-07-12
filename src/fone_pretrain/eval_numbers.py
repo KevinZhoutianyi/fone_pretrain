@@ -14,18 +14,12 @@ Usage (inside a GPU allocation):
 import argparse
 import json
 import random
-import sys
 from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 
-from .data import PackedDataset  # noqa: F401  (manifest reuse)
 from .model import FonePretrainModel, ModelConfig
-from .number_embed import N_SLOTS, digits_to_slots, extract_numbers, slots_to_string
-
-NUM_TOKEN = "<NUM>"
 
 
 # === task generation (model-agnostic; same seed -> same examples for every model) ===
@@ -70,7 +64,7 @@ FEWSHOT = {  # 4-shot prefixes, digits chosen away from the sweep values
 }
 
 
-# === our-model side: tokenize prompts (fone-aware) and generate ===
+# === our-model side: tokenize prompts and greedy-generate ===
 class CkptRunner:
     def __init__(self, ckpt_path: str, device="cuda"):
         state = torch.load(ckpt_path, map_location=device, weights_only=False)
@@ -78,55 +72,31 @@ class CkptRunner:
         from transformers import AutoTokenizer
         man = json.loads((Path(cfg["data_dir"]) / "manifest.json").read_text())
         self.tok = AutoTokenizer.from_pretrained(man["tokenizer"])
-        self.mode = man["mode"]
-        if self.mode == "fone":
-            self.tok.add_special_tokens({"additional_special_tokens": [NUM_TOKEN]})
-        self.num_id = man["num_token_id"]
         mcfg = ModelConfig(vocab_size=man["vocab_size"], n_layer=cfg["n_layer"],
                            n_head=cfg["n_head"], d_model=cfg["d_model"], d_ff=cfg["d_ff"],
-                           max_seq_len=cfg["seq_len"], embed_mode=cfg["embed_mode"],
-                           num_token_id=man["num_token_id"],
-                           num_loss_weight=cfg.get("num_loss_weight", 1.0))
-        self.model = FonePretrainModel(mcfg).to(device).eval()
+                           max_seq_len=cfg["seq_len"], embed_mode=cfg["embed_mode"])
+        is_num = tok_value = None
+        if cfg["embed_mode"] != "baseline":
+            nm = np.load(Path(cfg["data_dir"]) / "number_map.npz")
+            is_num = torch.from_numpy(nm["is_number_token"])
+            tok_value = torch.from_numpy(nm["token_value"])
+        self.model = FonePretrainModel(mcfg, is_num, tok_value).to(device).eval()
         self.model.load_state_dict(state["model"])
         self.device = device
 
-    def encode(self, text: str) -> tuple[list[int], list[list[int]]]:
-        """Token ids plus per-position digit slots (zeros off <NUM>)."""
-        if self.mode == "fone":
-            text, numbers = extract_numbers(text, NUM_TOKEN)
-        ids = self.tok(text, add_special_tokens=False)["input_ids"]
-        slots = [[0] * N_SLOTS for _ in ids]
-        if self.mode == "fone":
-            it = iter(numbers)
-            for i, t in enumerate(ids):
-                if t == self.num_id:
-                    a, b = next(it)
-                    slots[i] = digits_to_slots(a, b)
-        return ids, slots
-
     @torch.no_grad()
     def generate(self, prompt: str, max_new: int = 24) -> str:
-        """Greedy decode; a generated <NUM> is expanded via the digit head and its
-        slots are fed back so the model sees the value it produced."""
-        ids, slots = self.encode(prompt)
+        """Greedy decode. Numbers are ordinary chunk tokens, so no special handling."""
+        ids = self.tok(prompt, add_special_tokens=False)["input_ids"]
         pieces = []
         for _ in range(max_new):
             idx = torch.tensor([ids], device=self.device)
-            sl = torch.tensor([slots], device=self.device)
-            h = self.model(idx, num_slots=sl)[0, -1]
+            h = self.model(idx)[0, -1]
             nxt = int(self.model.lm_head(h).argmax())
             if nxt == self.tok.eos_token_id:
                 break
-            if self.mode == "fone" and nxt == self.num_id:
-                dec = self.model.num_head.decode(h[None])[0].tolist()
-                pieces.append(slots_to_string(dec))
-                ids.append(nxt)
-                slots.append(dec)
-            else:
-                pieces.append(self.tok.decode([nxt]))
-                ids.append(nxt)
-                slots.append([0] * N_SLOTS)
+            pieces.append(self.tok.decode([nxt]))
+            ids.append(nxt)
             if "\n" in pieces[-1]:
                 break
         return "".join(pieces)

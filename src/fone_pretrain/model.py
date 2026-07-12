@@ -1,9 +1,11 @@
-"""nanoGPT-style Llama decoder with pluggable number embedding.
+"""nanoGPT-style Llama decoder with chunk-based FoNE number embedding.
 
 Architecture: RMSNorm, RoPE, SwiGLU, no biases, tied input/output embeddings.
-The only novelty is in embed()/loss(): if `embed_mode` is a FoNE variant, <NUM>
-positions get a Fourier value embedding added on the input side, and positions
-whose *target* is <NUM> get a per-digit loss from FoneDigitHead on the output side.
+The only novelty is in embed(): if `embed_mode` is a FoNE variant, the first 6
+dimensions of pure-digit chunk tokens (values 0..999) are overwritten with a fixed
+Fourier code of the chunk's value; all other dimensions stay learned. There is no
+<NUM> token, no digit sidecar, and no output-side decode head -- the ordinary
+next-token cross-entropy over the vocab supervises numbers.
 """
 
 import os
@@ -13,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .number_embed import FoneDigitHead, FoneInputEmbed, LearnedFreqInputEmbed
+from .number_embed import FIXED_DIMS, ChunkFoneEmbed, ChunkFoneLearnedEmbed
 
 
 @dataclass
@@ -26,8 +28,6 @@ class ModelConfig:
     max_seq_len: int = 2048
     rope_theta: float = 10000.0
     embed_mode: str = "baseline"   # baseline | fone | fone_learned
-    num_token_id: int = -1         # id of <NUM>; required for fone modes
-    num_loss_weight: float = 1.0   # λ on the per-digit loss
 
 
 # === building blocks ===
@@ -93,7 +93,11 @@ class Block(nn.Module):
 
 # === the model ===
 class FonePretrainModel(nn.Module):
-    def __init__(self, cfg: ModelConfig):
+    def __init__(self, cfg: ModelConfig,
+                 is_number_token: torch.Tensor | None = None,
+                 token_value: torch.Tensor | None = None):
+        """is_number_token/token_value are (vocab,) maps from build_number_token_maps;
+        required for fone modes, unused for baseline."""
         super().__init__()
         self.cfg = cfg
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
@@ -102,13 +106,11 @@ class FonePretrainModel(nn.Module):
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
         self.lm_head.weight = self.tok_emb.weight  # tied
 
-        if cfg.embed_mode == "fone":
-            self.num_in = FoneInputEmbed(cfg.d_model)
-        elif cfg.embed_mode == "fone_learned":
-            self.num_in = LearnedFreqInputEmbed(cfg.d_model)
         if cfg.embed_mode != "baseline":
-            assert cfg.num_token_id >= 0, "fone modes need num_token_id"
-            self.num_head = FoneDigitHead(cfg.d_model)
+            assert is_number_token is not None and token_value is not None, \
+                "fone modes need is_number_token/token_value"
+            cls = ChunkFoneEmbed if cfg.embed_mode == "fone" else ChunkFoneLearnedEmbed
+            self.num_in = cls(is_number_token, token_value)
 
         self.apply(self._init)
         n_params = sum(p.numel() for p in self.parameters())
@@ -122,58 +124,39 @@ class FonePretrainModel(nn.Module):
         elif isinstance(m, nn.Embedding):
             nn.init.normal_(m.weight, std=0.02)
 
-    def embed(self, idx: torch.Tensor, num_slots: torch.Tensor | None) -> torch.Tensor:
-        """Token embeddings; at <NUM> positions add the projected Fourier value embedding.
-        num_slots: (B, T, 15) digit slots, zeros at non-number positions.
+    def embed(self, idx: torch.Tensor) -> torch.Tensor:
+        """Token embeddings; overwrite the first 6 dims of number-chunk tokens with the
+        fixed Fourier code of their value. All other tokens/dims stay learned.
 
-        Dense mask-multiply on purpose: boolean indexing gives dynamic shapes, which
-        made torch.compile recompile every step (4x slowdown in smoke) and tripped
-        IndexPutBackward autograd errors. Featurizing every position and zeroing
-        non-<NUM> ones is static-shape and costs one cheap 30->d matmul over T.
+        Dense mask-blend on purpose: boolean indexing gives dynamic shapes, which made
+        torch.compile recompile every step. Gathering the code for every position and
+        blending by a 0/1 mask is static-shape.
         """
         x = self.tok_emb(idx)
         if self.cfg.embed_mode != "baseline":
-            B, T = idx.shape
-            mask = (idx == self.cfg.num_token_id).unsqueeze(-1).to(x.dtype)   # (B, T, 1)
-            add = self.num_in(num_slots.reshape(B * T, -1)).reshape(B, T, -1)
-            x = x + mask * add.to(x.dtype)
+            code, is_num = self.num_in(idx)                          # (B,T,6), (B,T,1)
+            head = is_num * code.to(x.dtype) + (1 - is_num) * x[..., :FIXED_DIMS]
+            x = torch.cat([head, x[..., FIXED_DIMS:]], dim=-1)
         return x
 
-    def hidden(self, idx, num_slots=None):
+    def hidden(self, idx):
         rot = rope_cache(self.cfg.max_seq_len, self.cfg.d_model // self.cfg.n_head,
                          self.cfg.rope_theta, idx.device)
-        x = self.embed(idx, num_slots)
+        x = self.embed(idx)
         for blk in self.blocks:
             x = blk(x, rot)
         return self.ln_f(x)
 
-    def forward(self, idx, targets=None, num_slots=None, target_slots=None):
-        """With targets: combined pretraining loss dict (DDP-safe: loss goes through
-        forward so the reducer sees it). Without: final hidden states.
+    def forward(self, idx, targets=None):
+        """With targets: LM loss dict (DDP-safe: loss goes through forward so the reducer
+        sees it). Without: final hidden states.
 
-        idx/targets: (B, T) shifted-by-one token ids (numbers already as <NUM>).
-        num_slots:   (B, T, 15) digits for <NUM> tokens in the *input*.
-        target_slots:(B, T, 15) digits for positions whose *target* is <NUM>.
+        idx/targets: (B, T) shifted-by-one token ids (numbers are ordinary chunk tokens).
         """
         if targets is None:
-            return self.hidden(idx, num_slots)
-        h = self.hidden(idx, num_slots)
+            return self.hidden(idx)
+        h = self.hidden(idx)
         logits = self.lm_head(h)
         lm_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1),
                                   ignore_index=-100)
-        # digit_acc is NaN for baseline (no digit head -- not a real 1.0, don't plot/average
-        # it against the FoNE variants' digit_acc; see doc/tracking.md failed-jobs entry)
-        out = {"lm_loss": lm_loss, "num_loss": torch.zeros_like(lm_loss),
-               "digit_acc": torch.full((), float("nan"), device=idx.device)}
-        if self.cfg.embed_mode != "baseline":
-            # masked mean instead of boolean indexing: static shapes for torch.compile
-            tmask = (targets == self.cfg.num_token_id).float()                # (B, T)
-            n_num = tmask.sum().clamp(min=1.0)
-            dlogits = self.num_head.digit_logits(h)                          # (B, T, 15, 10)
-            ce = F.cross_entropy(dlogits.reshape(-1, 10), target_slots.reshape(-1).long(),
-                                 reduction="none").view(target_slots.shape).mean(-1)  # (B, T)
-            out["num_loss"] = (ce * tmask).sum() / n_num
-            acc = (dlogits.argmax(-1) == target_slots).float().mean(-1)      # (B, T)
-            out["digit_acc"] = (acc * tmask).sum() / n_num
-        out["loss"] = out["lm_loss"] + self.cfg.num_loss_weight * out["num_loss"]
-        return out
+        return {"lm_loss": lm_loss, "loss": lm_loss}
