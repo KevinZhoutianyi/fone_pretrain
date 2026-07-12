@@ -1,8 +1,8 @@
 """DDP pretraining loop for the three-variant FoNE comparison.
 
 Launch (inside an sbatch/srun allocation, never on the login node):
-  torchrun --standalone --nproc_per_node=8 -m fone_pretrain.train configs/125m_fone.yaml
-  torchrun ... -m fone_pretrain.train configs/125m_fone.yaml --smoke   # 20 steps, tiny batch
+  torchrun --standalone --nproc_per_node=8 -m fone_pretrain.train configs/llama3_fone.yaml
+  torchrun ... -m fone_pretrain.train configs/llama3_fone.yaml --smoke   # 20 steps, tiny batch
 
 Config is YAML; every hyperparameter that affects results is printed at start
 (experiments/CLAUDE.md §6). Metrics stream to stdout and metrics.jsonl in the run

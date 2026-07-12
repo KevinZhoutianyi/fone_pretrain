@@ -1,17 +1,15 @@
-# 02 — Llama-3 chunk-based FoNE, 125M three-variant
+# Chunk-based FoNE, 125M three-variant
 
 **Goal (paper.md §1).** Show the chunk-based FoNE pipeline trains stably: LM loss
 converges for all three variants, and the Fourier code injected into number-chunk
 tokens does not destabilize training.
 
-## What changed from experiment 01
+## Method
 
-Experiment 01 collapsed each whole number into one `<NUM>` token with a 15-digit
-sidecar and an output-side digit head. That design is retired. The new design keeps
-numbers as the tokenizer's own pure-digit chunks (up to 3 digits, values 0-999) and
-writes a Fourier code of the chunk's face value into the first F dimensions of that
-token's embedding row. The other dimensions stay learned. No `<NUM>` token, no sidecar,
-no digit head, no auxiliary loss.
+Numbers stay as the tokenizer's own pure-digit chunks (up to 3 digits, values 0-999).
+A Fourier code of the chunk's face value is written into the first F dimensions of that
+token's embedding row; the other dimensions stay learned. There is no custom number
+token, no digit sidecar, no output-side decode head, and no auxiliary loss.
 
 Because the model ties its input embedding and output projection to one weight matrix,
 the code is injected into that matrix (an effective weight recomputed each step) and
@@ -34,19 +32,19 @@ periods train normally.
 | hardware | one 8×H100 node per variant, DDP |
 
 All three variants read the identical token stream: tokenization does not depend on the
-variant, only the model's embedding does. This is a cleaner control than experiment 01,
-where baseline and FoNE consumed different tokenizations.
+variant, only the model's embedding does. This is a clean control: any difference on
+number tasks is attributable to the embedding alone.
 
 The code encodes face value only: for a chunk value v and period T the code is
 (cos 2πv/T, sin 2πv/T). A chunk's place in a larger number (ones vs thousands) is left
 to token position and attention, not the embedding. The fixed variant's 3 periods
 already separate all 1000 values; the learned variant's 20 extra periods let it discover
 its own resolution, and the two differ in dimension (6 vs 46) by design, so they do NOT
-start from the same code (the old exp-01 "identical at init" property no longer holds).
+start from the same code.
 
 The 128k Llama-3 vocab is stored as uint32 (past uint16's 65535 ceiling) and makes the
-tied embedding table ~98M params, so total parameter count is larger than 01's TinyLlama
-runs. The three variants are still matched to each other.
+tied embedding table ~98M params, so total parameter count is dominated by the embedding
+at this scale. The three variants are matched to each other.
 
 Init-scale control: raw cos/sin are O(1), ~50x the 0.02-scale learned rows, which alone
 would make the number rows dominate and blow up the init loss. Both variants multiply

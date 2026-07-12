@@ -1,13 +1,12 @@
 # Experiments
 
-Each numbered folder is a self-contained experiment with its own `run.py`, results, and logs.
+Each folder is a self-contained experiment with its own `README.md` (setup, observations).
 
-| # | Name | Status | Description |
-|---|------|--------|-------------|
-| 01 | 125m_three_variant | running smoke | pipeline validation: 3 variants, 3B tokens, 8xH100 each |
+| Name | Status | Description |
+|------|--------|-------------|
+| chunk_fone | data prep running | chunk-based FoNE: 3 variants (baseline / fone / fone_learned), 125M, ~3B tokens, one 8xH100 node each |
 
 ## Convention
-- Create new numbered folders (`01_xxx/`, `02_xxx/`, ...) for new experiments — don't edit old ones.
-- Each folder contains: `run.py`, `args/`, `ckpts/`, `figures/`, and `README.md` (observations).
-- This README should only contain brief descriptions of each experiment. Detailed setup, results, and observations belong in each experiment's own `README.md`.
-- Large outputs (checkpoints, datasets) go in `/data/fone_pretrain/`, not here.
+- Configs live in `configs/`, code in `src/fone_pretrain/`; the folder holds the write-up.
+- This README lists experiments briefly; detailed setup and results live in each folder's `README.md`.
+- Large outputs (checkpoints, datasets) go in `/fsx/zhouty/data/fone_pretrain/`, not here.
