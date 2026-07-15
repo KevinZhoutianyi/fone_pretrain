@@ -19,7 +19,8 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| (none) | chunk_fone 350M | code ready, launching | §2 | 125M could not rank variants (see completed row); pushing to 350M / more tokens to resolve. |
+| Dolmino 50B prep (CPU, bg) | olmo_stage2_surgery | running | §3 | tokenizing dolmino-mix-1124 official 50B mix (math 20.8%) with OLMo-2 tokenizer into dolmino50b, uint32; ~700M/50B tokens so far. Blocks the OLMo stage-2 wave. |
+| (none) | olmo_stage2_surgery | code ready, smoke-passed, waiting on data | §3 | FoNE embedding surgery on pretrained OLMo-2-1B, replicating the official 50B Dolmino stage-2 (GSM8K forms here: 3.3->43.8). 3 arms (baseline / unfreeze_ctrl / fone) x 3 seeds. VERIFIED official hparams (lr 7.45e-5 linear->0, 512x4096 batch, 23852 steps, z-loss 1e-5). Single-node smoke 3/3 no OOM; 2-node smoke rendezvous OK. Will run 2 nodes/run x 9 = 18 nodes, ~3 days. |
 
 ---
 
