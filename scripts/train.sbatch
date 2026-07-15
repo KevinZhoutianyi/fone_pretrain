@@ -26,9 +26,15 @@ mkdir -p "$RUN_DIR" logs
 # === background checkpoint sync to S3 (survives preemption via trap) ===
 ( while true; do sleep 600; aws s3 sync "$RUN_DIR" "$S3_DEST" --region us-west-2 --no-progress || true; done ) &
 SYNC_PID=$!
+# cleanup runs on EXIT and on SIGTERM (scancel/preemption): kill the sync loop, then
+# kill any torchrun/python children still alive on this node -- torchrun is known to
+# leave GPU-holding grandchildren when the outer script dies, which turns this node
+# into a "slurm-idle but GPU-busy" trap for the next job (we were bitten twice).
 cleanup() { kill "$SYNC_PID" 2>/dev/null || true
+            pkill -P $$ 2>/dev/null || true                 # direct children
+            pkill -f "fone_pretrain.train $CONFIG" 2>/dev/null || true  # torchrun workers of THIS run
             aws s3 sync "$RUN_DIR" "$S3_DEST" --region us-west-2 --no-progress || true; }
-trap cleanup EXIT
+trap cleanup EXIT TERM INT
 
 echo "=== job $SLURM_JOB_ID on $(hostname): $CONFIG ${EXTRA[*]} ==="
 # --ntasks=1 is load-bearing: without it slurm derives ntasks from cores/cpus-per-task
