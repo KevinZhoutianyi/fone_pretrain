@@ -48,8 +48,12 @@ def main():
     ap.add_argument("config")
     ap.add_argument("--smoke", action="store_true", help="20 steps at tiny scale, full code path")
     ap.add_argument("--resume", default=None, help="checkpoint path to resume from")
+    ap.add_argument("--grad-accum", type=int, default=None,
+                    help="override grad_accum (multi-node keeps global batch invariant)")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
+    if args.grad_accum is not None:
+        cfg["grad_accum"] = args.grad_accum
 
     # === DDP setup ===
     ddp = int(os.environ.get("RANK", -1)) != -1
