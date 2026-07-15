@@ -1,0 +1,5 @@
+{
+  "gsm8k_acc": 0.36,
+  "n": 200,
+  "model": "allenai/OLMo-2-0425-1B"
+}

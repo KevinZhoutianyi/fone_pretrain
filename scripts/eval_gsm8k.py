@@ -66,7 +66,11 @@ def last_number(text: str) -> str:
 
 
 class Model:
-    """Wraps either a surgery checkpoint or a plain HF model; exposes greedy generate."""
+    """Loads a surgery checkpoint or a plain HF model and uses native HF .generate()
+    (KV-cached, batched). For surgery arms the trained effective weights are baked back
+    into the HF model's embed_tokens/lm_head tensors, so generation is identical to what
+    the surgery would produce but runs with the KV cache (a hand token loop with no cache
+    is O(n^2) over the ~900-token 8-shot prompt -- far too slow for 200 examples)."""
     def __init__(self, ckpt=None, hf=None, device="cuda"):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         if ckpt:
@@ -75,47 +79,26 @@ class Model:
             from fone_pretrain.surgery import SurgeredLM
             self.tok = AutoTokenizer.from_pretrained(cfg["init_checkpoint"])
             base = AutoModelForCausalLM.from_pretrained(cfg["init_checkpoint"], dtype=torch.bfloat16)
-            self.model = SurgeredLM(base, self.tok, cfg["arm"]).to(device).eval()
-            self.model.load_state_dict(state["model"])
-            self.surgered = cfg["arm"] != "baseline"
+            wrapped = SurgeredLM(base, self.tok, cfg["arm"])
+            wrapped.load_state_dict(state["model"])
+            if cfg["arm"] != "baseline":
+                # bake trained effective weights into the HF tensors for cached generate
+                with torch.no_grad():
+                    base.get_input_embeddings().weight.copy_(wrapped.emb_surgery.effective_weight())
+                    base.get_output_embeddings().weight.copy_(wrapped.head_surgery.effective_weight())
+            self.model = base.to(device).eval()
         else:
             self.tok = AutoTokenizer.from_pretrained(hf)
             self.model = AutoModelForCausalLM.from_pretrained(hf, dtype=torch.bfloat16).to(device).eval()
-            self.surgered = None
+        self.model.config.use_cache = True
         self.device = device
-        # precompute effective weights once for surgery models (static during eval)
-        self.W_in = self.W_out = None
-        if self.surgered:
-            self.W_in = self.model.emb_surgery.effective_weight()
-            self.W_out = self.model.head_surgery.effective_weight()
-
-    @torch.no_grad()
-    def logits_next(self, ids):
-        idx = torch.tensor([ids], device=self.device)
-        if self.surgered is True:
-            import torch.nn.functional as F
-            x = F.embedding(idx, self.W_in)
-            body = self.model.lm.model(inputs_embeds=x)
-            return F.linear(body.last_hidden_state[0, -1], self.W_out)
-        elif self.surgered is False:  # our baseline arm wraps HF
-            return self.model(idx)[0, -1]
-        else:  # plain HF reference
-            return self.model(input_ids=idx).logits[0, -1]
 
     @torch.no_grad()
     def generate(self, prompt, max_new=256):
-        ids = self.tok(prompt, add_special_tokens=False)["input_ids"]
-        newline = self.tok("\n\n", add_special_tokens=False)["input_ids"]
-        out = []
-        for _ in range(max_new):
-            nxt = int(self.logits_next(ids).argmax())
-            if nxt == self.tok.eos_token_id:
-                break
-            ids.append(nxt); out.append(nxt)
-            txt = self.tok.decode(out)
-            if "\n\n" in txt or txt.count("The answer is") >= 1 and txt.rstrip().endswith("."):
-                break
-        return self.tok.decode(out)
+        enc = self.tok(prompt, add_special_tokens=False, return_tensors="pt").to(self.device)
+        out = self.model.generate(**enc, max_new_tokens=max_new, do_sample=False,
+                                  pad_token_id=self.tok.eos_token_id)
+        return self.tok.decode(out[0, enc["input_ids"].shape[1]:], skip_special_tokens=True)
 
 
 def main():
@@ -136,11 +119,13 @@ def main():
     for i in range(min(args.n, len(test))):
         q, a = test[i]["question"], test[i]["answer"]
         gen = m.generate(PREFIX + f"Q: {q}\nA:", args.max_new)
-        pred = last_number(gen.split("The answer is")[-1] if "The answer is" in gen else gen)
+        # keep only this example's answer: cut at the first boundary to the next Q
+        ans_seg = gen.split("\nQ:")[0].split("Q:")[0]
+        pred = last_number(ans_seg.split("The answer is")[-1] if "The answer is" in ans_seg else ans_seg)
         gold = gold_answer(a)
         correct += (pred == gold)
         if i < 3:
-            print(f"[{i}] gold={gold!r} pred={pred!r} gen={gen[:120]!r}")
+            print(f"[{i}] gold={gold!r} pred={pred!r} gen={ans_seg[:120]!r}")
     acc = correct / min(args.n, len(test))
     res = {"gsm8k_acc": acc, "n": min(args.n, len(test)),
            "model": args.ckpt or args.hf}
