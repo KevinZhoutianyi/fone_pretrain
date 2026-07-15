@@ -16,14 +16,16 @@ if [ "${1:-}" != "--now" ]; then
   echo "dataset ready:"; cat "$DATA/manifest.json"
 fi
 
-for arm in baseline unfreeze_ctrl fone; do
+# 2 arms (baseline / fone, arm A: code overwrite + rest trains) x 3 seeds = 6 runs,
+# 4 nodes each = 24 nodes. Each run's GSM8K eval is chained via afterok.
+for arm in baseline fone; do
   for s in 1337 2024 777; do
     run="olmo_${arm}_s${s}"
     cfg="configs/olmo_stage2/${run}.yaml"
-    tjid=$(sbatch --job-name="$run" scripts/train_olmo_2node.sbatch "$cfg" 2>/dev/null | grep -oE "[0-9]+$")
+    tjid=$(sbatch --job-name="$run" scripts/train_olmo_4node.sbatch "$cfg" 2>/dev/null | grep -oE "[0-9]+$")
     sbatch --job-name="ev_${run}" --dependency=afterok:$tjid \
       scripts/eval_gsm8k.sbatch "$CKPT/$run/ckpt_final.pt" "$run" >/dev/null 2>&1
-    echo "launched $run (train $tjid + chained GSM8K eval)"
+    echo "launched $run (train $tjid, 4 nodes + chained GSM8K eval)"
   done
 done
 echo "=== queue ==="

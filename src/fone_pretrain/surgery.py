@@ -57,67 +57,53 @@ def pick_surgery_dims(weight: torch.Tensor, num_ids: torch.Tensor,
 
 
 class SurgeredMatrix(nn.Module):
-    """One weight matrix (input embedding OR lm_head) with FoNE row surgery.
+    """One weight matrix (input embedding OR lm_head) with FoNE code overwrite (arm A).
 
-    arm:
-      "fone"          -- code + glue trainable, rest of number rows frozen
-      "unfreeze_ctrl" -- code_dims + glue dims trainable AT PRETRAINED VALUES (no code),
-                         rest of number rows frozen
-    (the baseline arm never constructs this module)
+    The full matrix is a normal trainable Parameter (`main`); everything trains as usual
+    EXCEPT the code_dims of number rows, which are overwritten each forward with the FoNE
+    code. Those overwritten entries are never read from `main`, so they get zero gradient
+    (frozen by construction); all other dims of number rows and all non-number rows train
+    normally. Thus the model is identical to the untouched pretrained model except the 20
+    code dims of number rows carry the learnable-frequency Fourier code -- the only
+    difference from the baseline arm.
 
-    Trainable parameters:
-      main       -- full-matrix Parameter for all NON-number rows (trains normally)
-      glue       -- (n_num, n_glue) pretrained values of the glue dims
-      patch      -- (n_num, n_code) pretrained values of the code dims (unfreeze_ctrl only)
-      num_code   -- ChunkFreqCode periods + scale (fone only)
-    The frozen remainder of number rows lives in the `frozen` buffer.
+    Trainable: main (full matrix, code dims of number rows excepted) + num_code
+    (ChunkFreqCode periods + per-matrix scale).
     """
 
     def __init__(self, weight: torch.Tensor, is_number_token: torch.Tensor,
-                 token_value: torch.Tensor, arm: str):
+                 token_value: torch.Tensor):
         super().__init__()
-        assert arm in ("fone", "unfreeze_ctrl")
-        self.arm = arm
         num_ids = torch.nonzero(is_number_token, as_tuple=False).squeeze(-1)
         self.register_buffer("num_ids", num_ids)
-        code_dims, glue_dims = pick_surgery_dims(weight, num_ids)
+        code_dims, _ = pick_surgery_dims(weight, num_ids)
         self.register_buffer("code_dims", code_dims)
-        self.register_buffer("glue_dims", glue_dims)
 
         # scale init: match the RMS of the dims the code replaces; cos/sin RMS = 1/sqrt(2)
         replaced_rms = weight[num_ids][:, code_dims].pow(2).mean().sqrt().item()
         scale_init = replaced_rms * math.sqrt(2.0)
 
-        # the full matrix trains normally for non-number rows; number rows in `main`
-        # are overwritten by index_copy each forward, so they never contribute and
-        # receive zero gradient (frozen by construction, like model.py).
         self.main = nn.Parameter(weight.clone())
-        self.register_buffer("frozen", weight[num_ids].clone())   # (n_num, d) pretrained rows
-        self.glue = nn.Parameter(weight[num_ids][:, glue_dims].clone())
-        if arm == "fone":
-            self.num_code = ChunkFreqCode(is_number_token, token_value,
-                                          n_periods=N_CODE_PERIODS, learnable_freq=True,
-                                          learnable_scale=True, scale_init=scale_init)
-        else:  # unfreeze_ctrl: trainable pretrained values where the code would go
-            self.patch = nn.Parameter(weight[num_ids][:, code_dims].clone())
+        self.num_code = ChunkFreqCode(is_number_token, token_value,
+                                      n_periods=N_CODE_PERIODS, learnable_freq=True,
+                                      learnable_scale=True, scale_init=scale_init)
 
     def effective_weight(self) -> torch.Tensor:
-        """Assemble [code | glue | frozen] number rows into the full matrix."""
-        rows = self.frozen.clone()                                    # (n_num, d) frozen base
-        rows[:, self.glue_dims] = self.glue
-        if self.arm == "fone":
-            rows[:, self.code_dims] = self.num_code().to(rows.dtype)  # (n_num, 20)
-        else:
-            rows[:, self.code_dims] = self.patch
+        """Overwrite the code_dims of number rows with the FoNE code; the rest of `main`
+        (all other dims of number rows, all non-number rows) trains normally."""
+        rows = self.main[self.num_ids].clone()                        # (n_num, d) trained rows
+        rows[:, self.code_dims] = self.num_code().to(rows.dtype)      # (n_num, 20) code
         return self.main.index_copy(0, self.num_ids, rows)
 
 
 class SurgeredLM(nn.Module):
-    """Wraps an HF causal LM (untied embeddings) with row surgery on both the input
-    embedding and the lm_head. arm="baseline" wraps without touching anything.
+    """Wraps an HF causal LM (untied embeddings). arm="fone" overwrites the 20 code dims
+    of number rows on both the input embedding and the lm_head with the learnable-freq
+    FoNE code; all other weights train normally. arm="baseline" wraps without touching
+    anything (faithful stage-2 replica). The only fone-vs-baseline difference is the code.
 
-    forward(idx, targets) mirrors our FonePretrainModel loss interface so train code
-    and PackedDataset batches work unchanged.
+    forward(idx, targets) mirrors our FonePretrainModel loss interface so train code and
+    PackedDataset batches work unchanged.
     """
 
     def __init__(self, hf_model, tokenizer, arm: str):
@@ -134,10 +120,10 @@ class SurgeredLM(nn.Module):
                 value = torch.cat([value, torch.zeros(pad, dtype=torch.long)])
             emb_w = self.lm.get_input_embeddings().weight.data
             head_w = self.lm.get_output_embeddings().weight.data
-            self.emb_surgery = SurgeredMatrix(emb_w, is_num, value, arm)
-            self.head_surgery = SurgeredMatrix(head_w, is_num, value, arm)
-            # the HF module's own embedding/lm_head weights are replaced per-forward;
-            # drop their Parameters so they are not trained or double-counted.
+            self.emb_surgery = SurgeredMatrix(emb_w, is_num, value)
+            self.head_surgery = SurgeredMatrix(head_w, is_num, value)
+            # the HF module's own embedding/lm_head weights are replaced per-forward by
+            # the surgery `main` params; drop the originals so they are not double-trained.
             self.lm.get_input_embeddings().weight.requires_grad_(False)
             self.lm.get_output_embeddings().weight.requires_grad_(False)
 
