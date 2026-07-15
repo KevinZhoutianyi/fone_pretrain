@@ -1,18 +1,19 @@
-# OLMo-2-1B stage-2 surgery: arm=fone seed=1337
+# OLMo-2-1B stage-2 surgery (VERIFIED official hparams): arm=fone seed=1337
 init_checkpoint: /fsx/zhouty/data/hf_cache/hub/models--allenai--OLMo-2-0425-1B/snapshots/9d3e43659f00c17e6da23cf32333afd1fc39fa1a
 seq_len: 4096
-lr: 9.0e-4
+lr: 7.4487e-5
 lr_end: 0.0
 weight_decay: 0.1
+z_loss_mult: 1.0e-5
 batch_size: 2
-grad_accum: 16
-max_steps: 47700
-warmup_steps: 500
+grad_accum: 32
+max_steps: 23852
+warmup_steps: 0
 grad_checkpoint: true
 log_every: 20
 eval_every: 1000
 eval_iters: 20
-ckpt_every: 5000
+ckpt_every: 4000
 arm: fone
 seed: 1337
 data_dir: /fsx/zhouty/data/fone_pretrain/datasets/dolmino50b

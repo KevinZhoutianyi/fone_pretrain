@@ -99,10 +99,11 @@ def main():
         start_step = state["step"]
 
     lr_end = cfg.get("lr_end", 0.0)
-    def lr_at(step):  # linear warmup then linear anneal to lr_end (WSD decay phase)
-        if step < cfg["warmup_steps"]:
-            return cfg["lr"] * (step + 1) / cfg["warmup_steps"]
-        t = (step - cfg["warmup_steps"]) / max(1, cfg["max_steps"] - cfg["warmup_steps"])
+    warmup = cfg.get("warmup_steps", 0)   # OLMo-2 stage-2 uses t_warmup=0
+    def lr_at(step):  # optional warmup, then linear anneal to lr_end (OLMo-2 stage-2 shape)
+        if warmup and step < warmup:
+            return cfg["lr"] * (step + 1) / warmup
+        t = (step - warmup) / max(1, cfg["max_steps"] - warmup)
         return cfg["lr"] + (lr_end - cfg["lr"]) * t
 
     run_dir = Path(cfg["run_dir"])
@@ -152,7 +153,7 @@ def main():
             if ddp:
                 model.require_backward_grad_sync = micro == cfg["grad_accum"] - 1
             with torch.autocast("cuda", torch.bfloat16):
-                out = model(**batch)
+                out = model(**batch, z_loss_mult=cfg.get("z_loss_mult", 0.0))
             (out["loss"] / cfg["grad_accum"]).backward()
         torch.nn.utils.clip_grad_norm_((p for p in raw.parameters() if p.requires_grad), 1.0)
         opt.step()

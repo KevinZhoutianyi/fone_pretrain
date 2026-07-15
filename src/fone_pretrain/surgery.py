@@ -141,7 +141,7 @@ class SurgeredLM(nn.Module):
             self.lm.get_input_embeddings().weight.requires_grad_(False)
             self.lm.get_output_embeddings().weight.requires_grad_(False)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, z_loss_mult=0.0):
         import torch.nn.functional as F
         if self.arm == "baseline":
             out = self.lm(input_ids=idx)
@@ -155,6 +155,13 @@ class SurgeredLM(nn.Module):
             logits = F.linear(body.last_hidden_state, W_out)
         if targets is None:
             return logits
-        lm_loss = F.cross_entropy(logits.view(-1, logits.size(-1)).float(),
-                                  targets.reshape(-1), ignore_index=-100)
-        return {"lm_loss": lm_loss, "loss": lm_loss}
+        flat = logits.view(-1, logits.size(-1)).float()
+        lm_loss = F.cross_entropy(flat, targets.reshape(-1), ignore_index=-100)
+        out = {"lm_loss": lm_loss, "loss": lm_loss}
+        if z_loss_mult:  # OLMo-2 softmax auxiliary (z-)loss: penalize logsumexp drift
+            mask = (targets.reshape(-1) != -100)
+            z = torch.logsumexp(flat, dim=-1)[mask]
+            z_loss = z_loss_mult * (z ** 2).mean()
+            out["z_loss"] = z_loss
+            out["loss"] = lm_loss + z_loss
+        return out
