@@ -12,6 +12,7 @@
 #SBATCH --cpus-per-task=96
 #SBATCH --mem=0
 #SBATCH --time=3-00:00:00
+#SBATCH --requeue
 #SBATCH --exclude=ip-10-4-120-250,ip-10-4-102-38
 #SBATCH --output=/fsx/zhouty/fone_pretrain/logs/%x-%j.out
 
@@ -28,6 +29,12 @@ export NCCL_DEBUG=WARN
 RUN_DIR=$(python -c "import yaml; print(yaml.safe_load(open('$CONFIG'))['run_dir'])")
 S3_DEST=s3://tianyizhoubucket/fone_pretrain/$(basename "$RUN_DIR")
 mkdir -p "$RUN_DIR" logs
+# auto-resume: --requeue makes SLURM re-run this script after preemption; if a
+# checkpoint exists, restart from it (loses at most ckpt_every steps of progress).
+if [ -f "$RUN_DIR/ckpt_latest.pt" ]; then
+  EXTRA+=(--resume "$RUN_DIR/ckpt_latest.pt")
+  echo "resuming from $RUN_DIR/ckpt_latest.pt"
+fi
 
 ( while true; do sleep 600; aws s3 sync "$RUN_DIR" "$S3_DEST" --region us-west-2 --no-progress || true; done ) &
 SYNC_PID=$!

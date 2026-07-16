@@ -13,7 +13,7 @@ grad_checkpoint: true
 log_every: 20
 eval_every: 1000
 eval_iters: 20
-ckpt_every: 4000
+ckpt_every: 500
 arm: fone
 seed: 2024
 data_dir: /fsx/zhouty/data/fone_pretrain/datasets/dolmino50b
