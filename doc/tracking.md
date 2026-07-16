@@ -19,7 +19,8 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| Dolmino 50B prep (CPU, bg) | olmo_stage2_surgery | running (download-based) | §3 | direct streaming of the 6-source interleave HANGS intermittently on the unauthenticated HF endpoint (0.1B and 1.4B stalls); rewrote to hf_hub_download files locally then tokenize (retries/resumes, no hang). Official 50B mix into dolmino50b, uint32. Blocks the OLMo stage-2 wave; a watcher (launch_olmo_wave.sh) auto-submits the 9 runs + chained GSM8K evals when the manifest lands. |
+| 1579-1589 | olmo_stage2_surgery | running (4/6, 2 queued) | §3 | 6 runs (baseline/fone x 3 seeds), 4 nodes each = 24 nodes (4 running, 2 pending on resources). arm A: 20-dim learnable-freq FoNE code overwrites the lowest-variance number-row dims of emb+lm_head, rest trains normally; fone vs baseline differ only in those dims. 40.6B tokens (prep crashed at 40.6/50B on transient HF net error, kept 406 full shards; final mix dclm 46%/math 20.9%/... near-official). ~715k tok/s on 4 nodes -> ~16h/run. fone code scales stable (emb 0.34/head 0.054), loss tracks baseline. Chained GSM8K evals via afterok. |
+| dolmino50b -> S3 | olmo_stage2_surgery | syncing | §3 | dataset (406 shards, ~160GB) uploading to s3://tianyizhoubucket/fone_pretrain/datasets/dolmino50b (watcher fired on manifest). |
 | (none) | olmo_stage2_surgery | code ready, smoke-passed, waiting on data | §3 | FoNE embedding surgery on pretrained OLMo-2-1B, replicating the official 50B Dolmino stage-2 (GSM8K forms here: 3.3->43.8). 3 arms (baseline / unfreeze_ctrl / fone) x 3 seeds. VERIFIED official hparams (lr 7.45e-5 linear->0, 512x4096 batch, 23852 steps, z-loss 1e-5). Single-node smoke 3/3 no OOM; 2-node smoke rendezvous OK. Will run 2 nodes/run x 9 = 18 nodes, ~3 days. |
 
 ---

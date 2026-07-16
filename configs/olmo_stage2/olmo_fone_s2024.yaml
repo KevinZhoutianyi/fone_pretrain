@@ -7,7 +7,7 @@ weight_decay: 0.1
 z_loss_mult: 1.0e-5
 batch_size: 2
 grad_accum: 32
-max_steps: 23852
+max_steps: 19359
 warmup_steps: 0
 grad_checkpoint: true
 log_every: 20
