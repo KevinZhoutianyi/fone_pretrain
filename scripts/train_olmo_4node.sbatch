@@ -36,11 +36,17 @@ if [ -f "$RUN_DIR/ckpt_latest.pt" ]; then
   echo "resuming from $RUN_DIR/ckpt_latest.pt"
 fi
 
-( while true; do sleep 600; aws s3 sync "$RUN_DIR" "$S3_DEST" --region us-west-2 --no-progress || true; done ) &
+# S3 hygiene: during training sync ONLY small files (metrics/config, a few KB), NOT the
+# ~18GB .pt checkpoints -- those stay on /fsx (local is enough since requeue returns to
+# the same cluster/fsx). This keeps S3 growth ~0 during the run. Only ckpt_FINAL is
+# pushed once on clean exit (disaster-recovery copy of the finished model).
+S3_EXCL=(--exclude "*.pt")
+( while true; do sleep 600; aws s3 sync "$RUN_DIR" "$S3_DEST" --region us-west-2 --no-progress "${S3_EXCL[@]}" || true; done ) &
 SYNC_PID=$!
 cleanup() { kill "$SYNC_PID" 2>/dev/null || true
             pkill -P $$ 2>/dev/null || true
-            aws s3 sync "$RUN_DIR" "$S3_DEST" --region us-west-2 --no-progress || true; }
+            # push metrics/config + the FINAL checkpoint only (not ckpt_latest)
+            aws s3 sync "$RUN_DIR" "$S3_DEST" --region us-west-2 --no-progress --exclude "ckpt_latest.pt" || true; }
 trap cleanup EXIT TERM INT
 
 MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)
