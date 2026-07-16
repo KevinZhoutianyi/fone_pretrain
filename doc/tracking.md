@@ -19,7 +19,7 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| 1579-1589 | olmo_stage2_surgery | running (4/6, 2 queued) | §3 | 6 runs (baseline/fone x 3 seeds), 4 nodes each = 24 nodes (4 running, 2 pending on resources). arm A: 20-dim learnable-freq FoNE code overwrites the lowest-variance number-row dims of emb+lm_head, rest trains normally; fone vs baseline differ only in those dims. 40.6B tokens (prep crashed at 40.6/50B on transient HF net error, kept 406 full shards; final mix dclm 46%/math 20.9%/... near-official). ~715k tok/s on 4 nodes -> ~16h/run. fone code scales stable (emb 0.34/head 0.054), loss tracks baseline. Chained GSM8K evals via afterok. |
+| 1607-1617 | olmo_stage2_surgery | running (1/6, 5 queued on full cluster) | §3 | 6 runs (baseline/fone x 3 seeds), 4 nodes each = 24 nodes. arm A: 20-dim learnable-freq FoNE code overwrites the lowest-variance number-row dims of emb+lm_head, rest trains normally; fone vs baseline differ only in those dims. 40.6B tokens, near-official mix (dclm 46%/math 20.9%). ~715k tok/s on 4 nodes -> ~16h/run. RESILIENT after a preemption (see failed row): ckpt_every=500 (~25min) + --requeue + auto-resume. Chained GSM8K evals via afterok. |
 | dolmino50b -> S3 | olmo_stage2_surgery | syncing | §3 | dataset (406 shards, ~160GB) uploading to s3://tianyizhoubucket/fone_pretrain/datasets/dolmino50b (watcher fired on manifest). |
 | (none) | olmo_stage2_surgery | code ready, smoke-passed, waiting on data | §3 | FoNE embedding surgery on pretrained OLMo-2-1B, replicating the official 50B Dolmino stage-2 (GSM8K forms here: 3.3->43.8). 3 arms (baseline / unfreeze_ctrl / fone) x 3 seeds. VERIFIED official hparams (lr 7.45e-5 linear->0, 512x4096 batch, 23852 steps, z-loss 1e-5). Single-node smoke 3/3 no OOM; 2-node smoke rendezvous OK. Will run 2 nodes/run x 9 = 18 nodes, ~3 days. |
 
@@ -58,6 +58,11 @@ gets re-attempted blindly. -->
 <!-- These lessons predate the chunk-based redesign but still guard the CURRENT code
 (data.py val split, prepare_data.py doc-count budgeting, train.sbatch launch, the
 static-shape effective_weight). Kept so the same mistakes are not repeated. -->
+
+| job | exp | failure mode | resolution |
+|---|---|---|---|
+| 1579-1589 | olmo_stage2 wave v1 | all 6 runs scancel'd (SIGTERM) at ~1h55m when another user took the 24 nodes on the full cluster (dev PreemptMode=OFF, so a manual/priority scancel). ckpt_every was 4000 -> no checkpoint saved -> 2h lost | ckpt_every 4000->500 (~25min); sbatch --requeue so SLURM re-runs on preemption; auto-resume from ckpt_latest.pt (model+opt+step). Relaunched as 1607-1617; a bump now costs <=25min and self-heals. |
+| dolmino prep (download) | olmo_stage2 data | crashed at 40.6B/50B on a transient hf_hub_download network error (LocalEntryNotFoundError, not caught) | kept all 406 full 100M-token shards (81% of target, covers the GSM8K window; mix near-official dclm 46%/math 20.9%); wrote manifest by hand; max_steps set to 19359 to match 40.6B. Did NOT re-run the last 9.4B (would risk another net error for little gain). |
 
 | job | exp | failure mode | resolution |
 |---|---|---|---|
