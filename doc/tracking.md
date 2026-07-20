@@ -19,7 +19,7 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| 1878 (smoke) | olmo_fone_hi | smoke queued | §3 | HIGH-BANDWIDTH fone: 46 code dims (n_periods 23) vs the tied run's 20 dims (n_periods 10); glue unchanged at 32, so code bandwidth is the only new variable. Surgery is now config-driven (code_periods/glue_dims keys; default 10/32 keeps every existing run identical, 5/5 CPU tests green). Tests whether the fone-vs-baseline tie was bandwidth starvation. Smoke on 1 node/20 steps gates the real checkpoint+forward/backward before the 16h run. |
+| 1883, 1884 | olmo_fone_hi | running (2 seeds parallel, 4 nodes each) | §3 | HIGH-BANDWIDTH fone: 46 code dims (n_periods 23) vs the tied run's 20 dims (n_periods 10); glue unchanged at 32, so code bandwidth is the only new variable. Surgery is now config-driven (code_periods/glue_dims keys; default 10/32 keeps every existing run identical, 5/5 CPU tests green). Tests whether the fone-vs-baseline tie was bandwidth starvation. Smoke (1878, 1 node/20 steps) passed on the real ckpt: loss falls, code scales stable (emb ~0.30, head ~0.06), no OOM. ~16h/run. Compare to existing baseline (full-set 0.272) with full-1319 GSM8K. Seeds 1337/2024 match the baseline seeds for a paired compare. |
 
 ---
 
