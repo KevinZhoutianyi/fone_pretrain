@@ -72,11 +72,12 @@ class SurgeredMatrix(nn.Module):
     """
 
     def __init__(self, weight: torch.Tensor, is_number_token: torch.Tensor,
-                 token_value: torch.Tensor):
+                 token_value: torch.Tensor,
+                 n_periods: int = N_CODE_PERIODS, n_glue: int = N_GLUE):
         super().__init__()
         num_ids = torch.nonzero(is_number_token, as_tuple=False).squeeze(-1)
         self.register_buffer("num_ids", num_ids)
-        code_dims, _ = pick_surgery_dims(weight, num_ids)
+        code_dims, _ = pick_surgery_dims(weight, num_ids, n_code=2 * n_periods, n_glue=n_glue)
         self.register_buffer("code_dims", code_dims)
 
         # scale init: match the RMS of the dims the code replaces; cos/sin RMS = 1/sqrt(2)
@@ -85,7 +86,7 @@ class SurgeredMatrix(nn.Module):
 
         self.main = nn.Parameter(weight.clone())
         self.num_code = ChunkFreqCode(is_number_token, token_value,
-                                      n_periods=N_CODE_PERIODS, learnable_freq=True,
+                                      n_periods=n_periods, learnable_freq=True,
                                       learnable_scale=True, scale_init=scale_init)
 
     def effective_weight(self) -> torch.Tensor:
@@ -106,7 +107,8 @@ class SurgeredLM(nn.Module):
     PackedDataset batches work unchanged.
     """
 
-    def __init__(self, hf_model, tokenizer, arm: str):
+    def __init__(self, hf_model, tokenizer, arm: str,
+                 n_periods: int = N_CODE_PERIODS, n_glue: int = N_GLUE):
         super().__init__()
         from .number_embed import build_number_token_maps
         self.lm = hf_model
@@ -120,8 +122,8 @@ class SurgeredLM(nn.Module):
                 value = torch.cat([value, torch.zeros(pad, dtype=torch.long)])
             emb_w = self.lm.get_input_embeddings().weight.data
             head_w = self.lm.get_output_embeddings().weight.data
-            self.emb_surgery = SurgeredMatrix(emb_w, is_num, value)
-            self.head_surgery = SurgeredMatrix(head_w, is_num, value)
+            self.emb_surgery = SurgeredMatrix(emb_w, is_num, value, n_periods, n_glue)
+            self.head_surgery = SurgeredMatrix(head_w, is_num, value, n_periods, n_glue)
             # the HF module's own embedding/lm_head weights are replaced per-forward by
             # the surgery `main` params; drop the originals so they are not double-trained.
             self.lm.get_input_embeddings().weight.requires_grad_(False)

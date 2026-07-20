@@ -90,3 +90,20 @@ def test_dim_selection_is_low_variance():
     var = weight[ids].var(dim=0)
     rest_min = min(var[i].item() for i in range(D) if i not in set(code_dims.tolist()))
     assert var[code_dims].max().item() <= rest_min + 1e-9
+
+
+def test_config_driven_bandwidth():
+    # high-bandwidth variant: n_periods/n_glue are configurable; the code must occupy
+    # exactly 2*n_periods dims and still touch only those dims of number rows at init.
+    torch.manual_seed(0)
+    weight = torch.randn(len(VOCAB), D) * 0.1
+    is_num, value = build_number_token_maps(FakeTokenizer(VOCAB))
+    sm = SurgeredMatrix(weight, is_num, value, n_periods=23, n_glue=32)
+    ids = torch.nonzero(is_num).squeeze(-1)
+    assert len(sm.code_dims) == 46                                    # 2 * 23
+    assert sm.num_code().shape[1] == 46
+    W = sm.effective_weight()
+    non = [i for i in range(len(VOCAB)) if i not in ids.tolist()]
+    assert torch.equal(W[non], weight[non])                          # non-number rows untouched
+    mask = torch.ones(D, dtype=torch.bool); mask[sm.code_dims] = False
+    assert torch.allclose(W[ids][:, mask], weight[ids][:, mask])     # non-code dims untouched

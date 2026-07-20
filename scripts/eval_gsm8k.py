@@ -76,10 +76,12 @@ class Model:
         if ckpt:
             state = torch.load(ckpt, map_location="cpu", weights_only=False)
             cfg = state["cfg"]
-            from fone_pretrain.surgery import SurgeredLM
+            from fone_pretrain.surgery import SurgeredLM, N_CODE_PERIODS, N_GLUE
             self.tok = AutoTokenizer.from_pretrained(cfg["init_checkpoint"])
             base = AutoModelForCausalLM.from_pretrained(cfg["init_checkpoint"], dtype=torch.bfloat16)
-            wrapped = SurgeredLM(base, self.tok, cfg["arm"])
+            wrapped = SurgeredLM(base, self.tok, cfg["arm"],
+                                 n_periods=cfg.get("code_periods", N_CODE_PERIODS),
+                                 n_glue=cfg.get("glue_dims", N_GLUE))
             wrapped.load_state_dict(state["model"])
             if cfg["arm"] != "baseline":
                 # bake trained effective weights into the HF tensors for cached generate

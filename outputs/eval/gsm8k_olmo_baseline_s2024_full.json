@@ -1,0 +1,5 @@
+{
+  "gsm8k_acc": 0.25549658832448824,
+  "n": 1319,
+  "model": "/fsx/zhouty/data/fone_pretrain/checkpoints/olmo_baseline_s2024/ckpt_final.pt"
+}

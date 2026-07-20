@@ -39,7 +39,10 @@ def build_model(cfg, device):
     if cfg.get("grad_checkpoint", True):
         hf.gradient_checkpointing_enable()   # 1B full-backprop at seq 4096 needs this
     tok = AutoTokenizer.from_pretrained(ckpt)
-    model = SurgeredLM(hf, tok, cfg["arm"]).to(device)
+    from .surgery import N_CODE_PERIODS, N_GLUE
+    model = SurgeredLM(hf, tok, cfg["arm"],
+                       n_periods=cfg.get("code_periods", N_CODE_PERIODS),
+                       n_glue=cfg.get("glue_dims", N_GLUE)).to(device)
     return model
 
 

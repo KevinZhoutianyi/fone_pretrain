@@ -15,12 +15,13 @@ set -euo pipefail
 TARGET=$1
 NAME=$2
 MODE=${3:-}
+N=${GSM8K_N:-200}  # override with GSM8K_N=1319 for the full test set
 cd /fsx/zhouty/fone_pretrain
 source .venv/bin/activate
 export HF_HOME=/fsx/zhouty/data/hf_cache
 OUT=/fsx/zhouty/fone_pretrain/outputs/eval/gsm8k_${NAME}.json
 if [ "$MODE" = "--hf" ]; then
-  srun --ntasks=1 python scripts/eval_gsm8k.py --hf "$TARGET" --n 200 --out "$OUT"
+  srun --ntasks=1 python scripts/eval_gsm8k.py --hf "$TARGET" --n "$N" --out "$OUT"
 else
-  srun --ntasks=1 python scripts/eval_gsm8k.py --ckpt "$TARGET" --n 200 --out "$OUT"
+  srun --ntasks=1 python scripts/eval_gsm8k.py --ckpt "$TARGET" --n "$N" --out "$OUT"
 fi
