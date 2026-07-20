@@ -19,9 +19,7 @@ result is integrated into paper.md. -->
 
 | job | exp | status | serves paper.md § | note |
 |---|---|---|---|---|
-| 1621,1633,1635,1637 | olmo_stage2_surgery | running SEQUENTIAL (1 active, 3 chained) | §3 | 2 arms (baseline/fone) x 2 seeds (1337,2024) = 4 runs, 4 nodes each, ONE AT A TIME via --dependency=afterany (resources tight, so no 24-node grab). arm A: 20-dim learnable-freq FoNE code overwrites lowest-variance number-row dims of emb+lm_head, rest trains normally; fone vs baseline differ only in those dims. 40.6B tokens, near-official mix (dclm 46%/math 20.9%). ~715k tok/s on 4 nodes -> ~16h/run -> ~2.5 days for all 4 sequentially. ckpt_every=500 + --requeue + auto-resume. S3 syncs only metrics/config during run (not the 18GB .pt); ckpt_final pushed once on exit. Chained GSM8K evals per run. |
-| dolmino50b -> S3 | olmo_stage2_surgery | syncing | §3 | dataset (406 shards, ~160GB) uploading to s3://tianyizhoubucket/fone_pretrain/datasets/dolmino50b (watcher fired on manifest). |
-| (none) | olmo_stage2_surgery | code ready, smoke-passed, waiting on data | §3 | FoNE embedding surgery on pretrained OLMo-2-1B, replicating the official 50B Dolmino stage-2 (GSM8K forms here: 3.3->43.8). 3 arms (baseline / unfreeze_ctrl / fone) x 3 seeds. VERIFIED official hparams (lr 7.45e-5 linear->0, 512x4096 batch, 23852 steps, z-loss 1e-5). Single-node smoke 3/3 no OOM; 2-node smoke rendezvous OK. Will run 2 nodes/run x 9 = 18 nodes, ~3 days. |
+| (none) | — | queue empty | — | OLMo stage-2 surgery wave finished; see Recently completed. |
 
 ---
 
@@ -40,6 +38,7 @@ paper.md, this row can be kept here as the historical record. -->
 | 356-364 (eval) | chunk_fone number eval | §1 | add/sub ~0 at all digit lengths (125M+3B is too small for arithmetic generation; not a discriminator). compare (2-10 digits) has signal but single-seed variance dominates: fone and fone_seed2 (SAME config, diff seed) got avg 0.16 vs 0.36. Weak trend that fone_12d/fone_learned_fixedscale hold up better than baseline at 6-10 digits, but not trustworthy at 1 seed -> multi-seed follow-up. |
 | 366-390 (3-seed) | chunk_fone multi-seed compare | §2 | SUPERSEDED by 6-seed below. 3 seeds suggested a strong fone_learned win (6d 0.34 vs baseline 0.07, learned>fixed). Adding 3 seeds reversed it -> the 3-seed result was a favorable draw. Kept as a cautionary record: 3 seeds was too few. |
 | 401-423 (6-seed) | chunk_fone multi-seed compare | §2 | 4 variants x 6 seeds, compare exact-match mean+/-std. HONEST RESULT: all FoNE variants sit slightly above baseline on avg (0.24-0.26 vs 0.22); at 6+ digits baseline collapses to ~0.08 and FoNE stays 0.07-0.19 higher, but every between-variant gap is within one std (bands 0.04-0.21). Variants statistically TIED at 125M; learned vs fixed indistinguishable. Decision: adopt fone_learned as the method for generality (subsumes fixed), not because it wins here. Ranking needs larger scale -> 350M. add/sub still ~0. |
+| olmo stage-2 wave (train 1621+, eval 1843) | olmo_stage2_surgery | §3 | FoNE embedding surgery on pretrained OLMo-2-1B, stage-2 continued pretrain on 40.6B/50B Dolmino tokens (81% of official; near-official mix dclm 46%/math 20.9%), then GSM8K (n=200, greedy exact-match). 2 arms x 2 seeds all trained to ckpt_final. RESULT: fone mean **0.273** (s1337 0.280, s2024 0.265) vs baseline mean **0.255** (both seeds 0.255); fone +1.75pt. Both trail official OLMo-2-1B stage-2 (**0.33**, its full 50B) — expected at 81% budget. Gap is within noise at 2 seeds (n=200 -> ~+/-3pt binomial SE per point; baseline std 0). A signal in fone's favor, not yet significant. |
 
 <!-- The single-`<NUM>`-per-number design (exp 01: whole number -> one <NUM> token +
 15-digit sidecar + output digit head) was replaced by chunk-based FoNE and its jobs
@@ -62,6 +61,7 @@ static-shape effective_weight). Kept so the same mistakes are not repeated. -->
 | job | exp | failure mode | resolution |
 |---|---|---|---|
 | 1579-1589 | olmo_stage2 wave v1 | all 6 runs scancel'd (SIGTERM) at ~1h55m when another user took the 24 nodes on the full cluster (dev PreemptMode=OFF, so a manual/priority scancel). ckpt_every was 4000 -> no checkpoint saved -> 2h lost | ckpt_every 4000->500 (~25min); sbatch --requeue so SLURM re-runs on preemption; auto-resume from ckpt_latest.pt (model+opt+step). Relaunched as 1607-1617; a bump now costs <=25min and self-heals. |
+| olmo_baseline_s777 | olmo_stage2 wave v1 | leftover from the v1 wave: reached step 2340/19359 (Jul 16) with the old config ckpt_every=4000 -> no ckpt ever saved (same failure as 1579-1589). Seed 777 was dropped when the wave shrank to 2 seeds (1337,2024) | superseded by the 2-seed v2 wave (see Recently completed). Ckpt dir holds only config.yaml + metrics.jsonl (74K), no weights; kept as historical record, not part of the current results. |
 | dolmino prep (download) | olmo_stage2 data | crashed at 40.6B/50B on a transient hf_hub_download network error (LocalEntryNotFoundError, not caught) | kept all 406 full 100M-token shards (81% of target, covers the GSM8K window; mix near-official dclm 46%/math 20.9%); wrote manifest by hand; max_steps set to 19359 to match 40.6B. Did NOT re-run the last 9.4B (would risk another net error for little gain). |
 
 | job | exp | failure mode | resolution |
@@ -100,3 +100,10 @@ otherwise the queue drifts away from the paper's argument. -->
 5. **Number eval suite incl. frontier-model comparison** — serves paper.md §3.
    Arithmetic exact match by digit length, number comparison, numeric precision;
    frontier API models need keys from the user (blocked on that).
+6. **Place the OLMo stage-2 GSM8K result in paper.md** — serves paper.md §3 (or a new §).
+   The 2-arm x 2-seed wave landed (fone 0.273 vs baseline 0.255, n=200; official 0.33 at
+   full 50B). This is a real-pretrained-model, larger-scale continued-pretrain result that
+   does not map onto the current §3 (frontier comparison) or the mechanism scaffold. Decide
+   with the user where it belongs before writing paper evidence. Open question on strength:
+   2 seeds and n=200 make the +1.75pt gap suggestive, not significant — likely need more
+   seeds and/or full 200->1319 GSM8K to firm it up.
