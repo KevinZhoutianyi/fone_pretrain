@@ -57,51 +57,80 @@ def pick_surgery_dims(weight: torch.Tensor, num_ids: torch.Tensor,
 
 
 class SurgeredMatrix(nn.Module):
-    """One weight matrix (input embedding OR lm_head) with FoNE code overwrite (arm A).
+    """One weight matrix (input embedding OR lm_head), surgered per `mode`.
 
-    The full matrix is a normal trainable Parameter (`main`); everything trains as usual
-    EXCEPT the code_dims of number rows, which are overwritten each forward with the FoNE
-    code. Those overwritten entries are never read from `main`, so they get zero gradient
-    (frozen by construction); all other dims of number rows and all non-number rows train
-    normally. Thus the model is identical to the untouched pretrained model except the 20
-    code dims of number rows carry the learnable-frequency Fourier code -- the only
-    difference from the baseline arm.
+    The full matrix is a normal trainable Parameter (`main`). What happens to the number
+    rows depends on mode; non-number rows always come from `main` and train normally.
 
-    Trainable: main (full matrix, code dims of number rows excepted) + num_code
-    (ChunkFreqCode periods + per-matrix scale).
+      mode="fone"        -- the code_dims of number rows are overwritten each forward with
+        the FoNE code; all OTHER dims of number rows still train (from `main`). The model
+        is the untouched pretrained model except the code dims carry the Fourier code.
+        Problem: the free non-code dims let the model keep its pretrained number identity
+        and ignore the code (observed: code scale decays toward 0).
+
+      mode="fone_forced" -- every number row is a FROZEN shared base (the mean over
+        pretrained number rows) with the code_dims overwritten by the FoNE code. Two
+        number tokens differ ONLY in the code, so the model cannot distinguish numbers
+        without reading it. This is the "force the model to use FoNE" arm.
+
+      mode="mean_ctrl"   -- every number row is the frozen shared base, no code: all
+        number tokens share one embedding. Control that isolates "collapse number rows to
+        their shared mean" from "add the FoNE code back on top of that base".
+
+    Freezing is by construction: in the forced/ctrl modes `main`'s number rows are never
+    read, so they get zero gradient; the shared base is a buffer. Trainable in fone /
+    fone_forced: main (non-number rows; plus non-code number dims in fone) + num_code.
     """
 
     def __init__(self, weight: torch.Tensor, is_number_token: torch.Tensor,
                  token_value: torch.Tensor,
-                 n_periods: int = N_CODE_PERIODS, n_glue: int = N_GLUE):
+                 n_periods: int = N_CODE_PERIODS, n_glue: int = N_GLUE, mode: str = "fone"):
         super().__init__()
+        self.mode = mode
         num_ids = torch.nonzero(is_number_token, as_tuple=False).squeeze(-1)
         self.register_buffer("num_ids", num_ids)
         code_dims, _ = pick_surgery_dims(weight, num_ids, n_code=2 * n_periods, n_glue=n_glue)
         self.register_buffer("code_dims", code_dims)
 
-        # scale init: match the RMS of the dims the code replaces; cos/sin RMS = 1/sqrt(2)
-        replaced_rms = weight[num_ids][:, code_dims].pow(2).mean().sqrt().item()
-        scale_init = replaced_rms * math.sqrt(2.0)
-
         self.main = nn.Parameter(weight.clone())
-        self.num_code = ChunkFreqCode(is_number_token, token_value,
-                                      n_periods=n_periods, learnable_freq=True,
-                                      learnable_scale=True, scale_init=scale_init)
+
+        if mode in ("fone_forced", "mean_ctrl"):
+            # shared, frozen base for every number row: the mean over pretrained number
+            # rows. Keeps the embedding norm/direction in-distribution while erasing the
+            # per-token number identity, which then lives only in the code (or nowhere).
+            self.register_buffer("base_row", weight[num_ids].mean(dim=0))   # (d,)
+
+        if mode != "mean_ctrl":
+            # scale init: match the RMS of the dims the code replaces; cos/sin RMS = 1/sqrt(2)
+            replaced_rms = weight[num_ids][:, code_dims].pow(2).mean().sqrt().item()
+            scale_init = replaced_rms * math.sqrt(2.0)
+            self.num_code = ChunkFreqCode(is_number_token, token_value,
+                                          n_periods=n_periods, learnable_freq=True,
+                                          learnable_scale=True, scale_init=scale_init)
 
     def effective_weight(self) -> torch.Tensor:
-        """Overwrite the code_dims of number rows with the FoNE code; the rest of `main`
-        (all other dims of number rows, all non-number rows) trains normally."""
-        rows = self.main[self.num_ids].clone()                        # (n_num, d) trained rows
-        rows[:, self.code_dims] = self.num_code().to(rows.dtype)      # (n_num, 20) code
+        """Assemble the number rows per mode; non-number rows come from `main` unchanged."""
+        if self.mode == "fone":
+            rows = self.main[self.num_ids].clone()                    # (n_num, d) trained rows
+            rows[:, self.code_dims] = self.num_code().to(rows.dtype)  # code
+        else:
+            # fone_forced / mean_ctrl: frozen shared base for every number row
+            rows = self.base_row.unsqueeze(0).expand(self.num_ids.numel(), -1).clone()
+            if self.mode == "fone_forced":
+                rows[:, self.code_dims] = self.num_code().to(rows.dtype)
         return self.main.index_copy(0, self.num_ids, rows)
 
 
 class SurgeredLM(nn.Module):
-    """Wraps an HF causal LM (untied embeddings). arm="fone" overwrites the 20 code dims
-    of number rows on both the input embedding and the lm_head with the learnable-freq
-    FoNE code; all other weights train normally. arm="baseline" wraps without touching
-    anything (faithful stage-2 replica). The only fone-vs-baseline difference is the code.
+    """Wraps an HF causal LM (untied embeddings). The arm selects the number-row surgery:
+
+      baseline      -- no surgery (faithful stage-2 replica).
+      fone          -- code overwrites the code_dims of number rows; other number dims
+                       still train, so the model can route around the code.
+      fone_forced   -- number rows are a frozen shared mean + FoNE code; the code is the
+                       ONLY thing distinguishing numbers, forcing the model to use it.
+      mean_ctrl     -- number rows are the frozen shared mean, no code (control for
+                       fone_forced: isolates the code from the mean-collapse).
 
     forward(idx, targets) mirrors our FonePretrainModel loss interface so train code and
     PackedDataset batches work unchanged.
@@ -122,8 +151,8 @@ class SurgeredLM(nn.Module):
                 value = torch.cat([value, torch.zeros(pad, dtype=torch.long)])
             emb_w = self.lm.get_input_embeddings().weight.data
             head_w = self.lm.get_output_embeddings().weight.data
-            self.emb_surgery = SurgeredMatrix(emb_w, is_num, value, n_periods, n_glue)
-            self.head_surgery = SurgeredMatrix(head_w, is_num, value, n_periods, n_glue)
+            self.emb_surgery = SurgeredMatrix(emb_w, is_num, value, n_periods, n_glue, mode=arm)
+            self.head_surgery = SurgeredMatrix(head_w, is_num, value, n_periods, n_glue, mode=arm)
             # the HF module's own embedding/lm_head weights are replaced per-forward by
             # the surgery `main` params; drop the originals so they are not double-trained.
             self.lm.get_input_embeddings().weight.requires_grad_(False)

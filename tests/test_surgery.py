@@ -32,11 +32,11 @@ VOCAB = ["<eos>", "the", "1", "42", "123", "999", "100", "7"] + [f"w{i}" for i i
 D = 128  # d_model for tests (>= 20 code dims)
 
 
-def _setup(scale_mult=1.0):
+def _setup(scale_mult=1.0, mode="fone"):
     torch.manual_seed(0)
     weight = torch.randn(len(VOCAB), D) * 0.1 * scale_mult
     is_num, value = build_number_token_maps(FakeTokenizer(VOCAB))
-    sm = SurgeredMatrix(weight, is_num, value)
+    sm = SurgeredMatrix(weight, is_num, value, mode=mode)
     ids = torch.nonzero(is_num).squeeze(-1)
     return weight, sm, ids
 
@@ -107,3 +107,46 @@ def test_config_driven_bandwidth():
     assert torch.equal(W[non], weight[non])                          # non-number rows untouched
     mask = torch.ones(D, dtype=torch.bool); mask[sm.code_dims] = False
     assert torch.allclose(W[ids][:, mask], weight[ids][:, mask])     # non-code dims untouched
+
+
+def test_fone_forced_numbers_differ_only_in_code():
+    # forced arm: every number row is the frozen shared mean + code, so two number rows
+    # differ ONLY in the code dims -- the model must read the code to tell numbers apart.
+    weight, sm, ids = _setup(mode="fone_forced")
+    W = sm.effective_weight()
+    non = [i for i in range(len(VOCAB)) if i not in ids.tolist()]
+    assert torch.equal(W[non], weight[non])                          # non-number rows untouched
+    # non-code dims are identical across ALL number rows (the shared frozen mean)
+    mask = torch.ones(D, dtype=torch.bool); mask[sm.code_dims] = False
+    nc = W[ids][:, mask]
+    assert torch.allclose(nc, nc[0].expand_as(nc))                   # every number row shares them
+    # and that shared value IS the mean of the pretrained number rows
+    assert torch.allclose(nc[0], weight[ids].mean(dim=0)[mask], atol=1e-6)
+    # code dims DO differ across number values (identity carried by the code)
+    cd = W[ids][:, sm.code_dims]
+    assert not torch.allclose(cd, cd[0].expand_as(cd))
+
+
+def test_fone_forced_gradient_routing():
+    # number rows are never read from `main` (they are rebuilt from the frozen base), so
+    # main gets zero grad on number rows; the code periods/scale carry the number signal.
+    weight, sm, ids = _setup(mode="fone_forced")
+    sm.effective_weight().sum().backward()
+    assert torch.allclose(sm.main.grad[ids], torch.zeros_like(sm.main.grad[ids]))  # frozen
+    non = [i for i in range(len(VOCAB)) if i not in ids.tolist()]
+    assert sm.main.grad[non].abs().sum() > 0                         # non-number rows train
+    assert sm.num_code.log_periods.grad.abs().sum() > 0              # code trains
+    assert sm.num_code.scale.grad is not None
+
+
+def test_mean_ctrl_collapses_numbers_no_code():
+    # control arm: every number row is the frozen shared mean, no code -> all number
+    # tokens share one identical embedding, and there is no num_code module.
+    weight, sm, ids = _setup(mode="mean_ctrl")
+    assert not hasattr(sm, "num_code")
+    W = sm.effective_weight()
+    rows = W[ids]
+    assert torch.allclose(rows, rows[0].expand_as(rows))             # all number rows identical
+    assert torch.allclose(rows[0], weight[ids].mean(dim=0), atol=1e-6)
+    non = [i for i in range(len(VOCAB)) if i not in ids.tolist()]
+    assert torch.equal(W[non], weight[non])                          # non-number rows untouched

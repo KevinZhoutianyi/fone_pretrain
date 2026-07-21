@@ -142,9 +142,10 @@ def main():
         model.train()
         return agg
 
-    # code diagnostics: track that the FoNE code stays alive (scale not collapsing)
+    # code diagnostics: track that the FoNE code stays alive (scale not collapsing).
+    # fone and fone_forced carry a code; baseline and mean_ctrl do not.
     def code_stats():
-        if cfg["arm"] != "fone":
+        if cfg["arm"] not in ("fone", "fone_forced"):
             return {}
         return {"emb_scale": raw.emb_surgery.num_code.scale.item(),
                 "head_scale": raw.head_surgery.num_code.scale.item()}

@@ -1,0 +1,28 @@
+# OLMo-2-1B stage-2 surgery: arm=fone_forced seed=2024.
+# Forces the number signal through the FoNE code: every number-token row is a FROZEN
+# shared mean (over pretrained number rows) with the code_dims overwritten by the code
+# (arm=fone_forced), so two numbers differ ONLY in the code -- the model cannot tell
+# numbers apart without reading it. arm=mean_ctrl is the same frozen shared mean with NO
+# code (all number tokens share one embedding): isolates the code from the mean-collapse.
+# 46 code dims (n_periods 23) to carry 0-999. Same VERIFIED hparams as the baseline wave.
+init_checkpoint: /fsx/zhouty/data/hf_cache/hub/models--allenai--OLMo-2-0425-1B/snapshots/9d3e43659f00c17e6da23cf32333afd1fc39fa1a
+seq_len: 4096
+lr: 7.4487e-5
+lr_end: 0.0
+weight_decay: 0.1
+z_loss_mult: 1.0e-5
+batch_size: 2
+grad_accum: 32
+max_steps: 19359
+warmup_steps: 0
+grad_checkpoint: true
+log_every: 20
+eval_every: 1000
+eval_iters: 20
+ckpt_every: 500
+arm: fone_forced
+code_periods: 23
+glue_dims: 32
+seed: 2024
+data_dir: /fsx/zhouty/data/fone_pretrain/datasets/dolmino50b
+run_dir: /fsx/zhouty/data/fone_pretrain/checkpoints/olmo_forced_s2024
