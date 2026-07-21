@@ -19,13 +19,34 @@ import torch.nn as nn
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from fone_pretrain.number_embed import build_number_token_maps  # noqa: E402
-from fone_pretrain.surgery import SurgeredMatrix, pick_surgery_dims  # noqa: E402
+from fone_pretrain.surgery import SurgeredLM, SurgeredMatrix, pick_surgery_dims  # noqa: E402
 
 
 class FakeTokenizer:
     def __init__(self, vocab): self.vocab = vocab
     def __len__(self): return len(self.vocab)
     def decode(self, ids): return self.vocab[ids[0]]
+
+
+class _FakeBody(nn.Module):
+    """Stand-in for hf_model.model: consumes inputs_embeds, returns last_hidden_state."""
+    def __init__(self, d):
+        super().__init__()
+        self.lin = nn.Linear(d, d)
+    def forward(self, inputs_embeds=None):
+        return type("O", (), {"last_hidden_state": self.lin(inputs_embeds)})()
+
+
+class FakeHFModel(nn.Module):
+    """Minimal untied HF causal LM: get_input_embeddings / get_output_embeddings /
+    model(inputs_embeds=...), enough to exercise SurgeredLM without a download."""
+    def __init__(self, vocab, d):
+        super().__init__()
+        self._emb = nn.Embedding(vocab, d)
+        self._head = nn.Linear(d, vocab, bias=False)
+        self.model = _FakeBody(d)
+    def get_input_embeddings(self): return self._emb
+    def get_output_embeddings(self): return self._head
 
 
 VOCAB = ["<eos>", "the", "1", "42", "123", "999", "100", "7"] + [f"w{i}" for i in range(56)]
@@ -150,3 +171,48 @@ def test_mean_ctrl_collapses_numbers_no_code():
     assert torch.allclose(rows[0], weight[ids].mean(dim=0), atol=1e-6)
     non = [i for i in range(len(VOCAB)) if i not in ids.tolist()]
     assert torch.equal(W[non], weight[non])                          # non-number rows untouched
+
+
+def _lm(arm):
+    torch.manual_seed(0)
+    hf = FakeHFModel(len(VOCAB), D)
+    return SurgeredLM(hf, FakeTokenizer(VOCAB), arm), hf
+
+
+def test_input_forcing_arms_leave_lm_head_normal():
+    # fone_forced / mean_ctrl surger the INPUT embedding only; the lm_head must stay an
+    # ordinary trainable HF weight (surgering it too would collapse every number token's
+    # output direction and cripple number generation -- the bug this arm design fixes).
+    for arm in ("fone_forced", "mean_ctrl"):
+        lm, hf = _lm(arm)
+        assert lm.head_surgery is None, arm
+        head_w = hf.get_output_embeddings().weight
+        assert head_w.requires_grad, arm                             # lm_head still trains
+        # untouched at init: identical to the pretrained head weight
+        assert torch.equal(head_w.detach(), hf._head.weight.detach()), arm
+        # input embedding IS surgered
+        assert lm.emb_surgery is not None and lm.emb_surgery.mode == arm
+
+
+def test_fone_arm_surgers_both_matrices():
+    # regression: the fone arm still ties input+output (both get a code head).
+    lm, hf = _lm("fone")
+    assert lm.head_surgery is not None
+    assert not hf.get_input_embeddings().weight.requires_grad
+    assert not hf.get_output_embeddings().weight.requires_grad
+
+
+def test_forced_forward_and_backward_runs():
+    # end-to-end on the fake model: forced arm produces a loss and the input code + the
+    # (normal) lm_head both receive gradient; the frozen input base does not.
+    lm, hf = _lm("fone_forced")
+    idx = torch.tensor([[2, 3, 1, 4]])          # number + non-number token ids
+    targets = torch.tensor([3, 1, 4, 0])
+    out = lm(idx, targets=targets)
+    out["loss"].backward()
+    assert torch.isfinite(out["loss"])
+    assert lm.emb_surgery.num_code.scale.grad is not None            # input code trains
+    assert hf.get_output_embeddings().weight.grad is not None        # lm_head trains
+    ids = lm.emb_surgery.num_ids
+    assert torch.allclose(lm.emb_surgery.main.grad[ids],             # frozen input base
+                          torch.zeros_like(lm.emb_surgery.main.grad[ids]))

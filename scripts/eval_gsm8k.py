@@ -84,10 +84,13 @@ class Model:
                                  n_glue=cfg.get("glue_dims", N_GLUE))
             wrapped.load_state_dict(state["model"])
             if cfg["arm"] != "baseline":
-                # bake trained effective weights into the HF tensors for cached generate
+                # bake trained effective weights into the HF tensors for cached generate.
+                # base IS wrapped.lm, so the lm_head is already the trained weight when the
+                # arm leaves it untouched (fone_forced / mean_ctrl); only fone surgers it.
                 with torch.no_grad():
                     base.get_input_embeddings().weight.copy_(wrapped.emb_surgery.effective_weight())
-                    base.get_output_embeddings().weight.copy_(wrapped.head_surgery.effective_weight())
+                    if wrapped.head_surgery is not None:
+                        base.get_output_embeddings().weight.copy_(wrapped.head_surgery.effective_weight())
             self.model = base.to(device).eval()
         else:
             self.tok = AutoTokenizer.from_pretrained(hf)

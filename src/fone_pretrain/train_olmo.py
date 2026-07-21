@@ -143,12 +143,15 @@ def main():
         return agg
 
     # code diagnostics: track that the FoNE code stays alive (scale not collapsing).
-    # fone and fone_forced carry a code; baseline and mean_ctrl do not.
+    # fone and fone_forced carry an input-embedding code; baseline and mean_ctrl do not.
+    # Only fone also carries a head code (fone_forced leaves the lm_head untouched).
     def code_stats():
         if cfg["arm"] not in ("fone", "fone_forced"):
             return {}
-        return {"emb_scale": raw.emb_surgery.num_code.scale.item(),
-                "head_scale": raw.head_surgery.num_code.scale.item()}
+        stats = {"emb_scale": raw.emb_surgery.num_code.scale.item()}
+        if raw.head_surgery is not None:
+            stats["head_scale"] = raw.head_surgery.num_code.scale.item()
+        return stats
 
     # === train loop ===
     model.train()

@@ -125,15 +125,22 @@ class SurgeredLM(nn.Module):
     """Wraps an HF causal LM (untied embeddings). The arm selects the number-row surgery:
 
       baseline      -- no surgery (faithful stage-2 replica).
-      fone          -- code overwrites the code_dims of number rows; other number dims
-                       still train, so the model can route around the code.
-      fone_forced   -- number rows are a frozen shared mean + FoNE code; the code is the
-                       ONLY thing distinguishing numbers, forcing the model to use it.
-      mean_ctrl     -- number rows are the frozen shared mean, no code (control for
-                       fone_forced: isolates the code from the mean-collapse).
+      fone          -- code overwrites the code_dims of number rows on BOTH the input
+                       embedding and the lm_head; other number dims still train, so the
+                       model can route around the code.
+      fone_forced   -- INPUT embedding only: number rows are a frozen shared mean + FoNE
+                       code, so the code is the ONLY thing distinguishing numbers on input,
+                       forcing the model to read it. The lm_head trains normally (surgering
+                       the output projection too would collapse every number token's output
+                       direction to the same vector and cripple number generation).
+      mean_ctrl     -- INPUT embedding only: number rows are the frozen shared mean, no
+                       code (control for fone_forced: isolates the code from the
+                       mean-collapse). The lm_head trains normally.
 
-    forward(idx, targets) mirrors our FonePretrainModel loss interface so train code and
-    PackedDataset batches work unchanged.
+    So fone surgers both matrices; fone_forced / mean_ctrl surger only the input embedding
+    and leave the lm_head as an ordinary trainable weight, identical across the two arms
+    and the baseline. forward(idx, targets) mirrors our FonePretrainModel loss interface
+    so train code and PackedDataset batches work unchanged.
     """
 
     def __init__(self, hf_model, tokenizer, arm: str,
@@ -142,6 +149,8 @@ class SurgeredLM(nn.Module):
         from .number_embed import build_number_token_maps
         self.lm = hf_model
         self.arm = arm
+        # fone ties input+output surgery; the input-forcing arms surger the embedding only.
+        self.head_surgery = None
         if arm != "baseline":
             is_num, value = build_number_token_maps(tokenizer)
             vocab = self.lm.get_input_embeddings().weight.shape[0]
@@ -150,13 +159,15 @@ class SurgeredLM(nn.Module):
                 is_num = torch.cat([is_num, torch.zeros(pad, dtype=torch.bool)])
                 value = torch.cat([value, torch.zeros(pad, dtype=torch.long)])
             emb_w = self.lm.get_input_embeddings().weight.data
-            head_w = self.lm.get_output_embeddings().weight.data
             self.emb_surgery = SurgeredMatrix(emb_w, is_num, value, n_periods, n_glue, mode=arm)
-            self.head_surgery = SurgeredMatrix(head_w, is_num, value, n_periods, n_glue, mode=arm)
-            # the HF module's own embedding/lm_head weights are replaced per-forward by
-            # the surgery `main` params; drop the originals so they are not double-trained.
+            # the HF module's input embedding is replaced per-forward by emb_surgery.main;
+            # drop the original so it is not double-trained.
             self.lm.get_input_embeddings().weight.requires_grad_(False)
-            self.lm.get_output_embeddings().weight.requires_grad_(False)
+            if arm == "fone":
+                head_w = self.lm.get_output_embeddings().weight.data
+                self.head_surgery = SurgeredMatrix(head_w, is_num, value, n_periods, n_glue, mode=arm)
+                self.lm.get_output_embeddings().weight.requires_grad_(False)
+            # fone_forced / mean_ctrl: lm_head stays a normal trainable HF weight.
 
     def forward(self, idx, targets=None, z_loss_mult=0.0):
         import torch.nn.functional as F
@@ -165,9 +176,11 @@ class SurgeredLM(nn.Module):
             logits = out.logits
         else:
             W_in = self.emb_surgery.effective_weight()
-            W_out = self.head_surgery.effective_weight()
+            # fone: surgered head; forced/mean_ctrl: ordinary (trainable) lm_head weight.
+            W_out = (self.head_surgery.effective_weight() if self.head_surgery is not None
+                     else self.lm.get_output_embeddings().weight)
             x = F.embedding(idx, W_in)
-            # run the transformer body on inputs_embeds; project with surgered head
+            # run the transformer body on inputs_embeds; project with the head weight
             body = self.lm.model(inputs_embeds=x)
             logits = F.linear(body.last_hidden_state, W_out)
         if targets is None:
